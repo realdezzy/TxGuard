@@ -1,0 +1,17 @@
+node_modules/
+dist/
+.output/
+.turbo/
+*.tsbuildinfo
+
+.env
+.env.local
+.env.*.local
+
+*.log
+npm-debug.log*
+
+.DS_Store
+Thumbs.db
+
+.vite/
