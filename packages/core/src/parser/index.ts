@@ -22,14 +22,31 @@ function identifyProgram(programId: string): string {
   return KNOWN_PROGRAMS[programId] ?? 'Unknown Program';
 }
 
+function decodeBase64(input: string): Uint8Array {
+  const binary = atob(input);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) {
+    bytes[i] = binary.charCodeAt(i);
+  }
+  return bytes;
+}
+
+function readUInt32LE(data: Uint8Array, offset: number): number {
+  return new DataView(data.buffer, data.byteOffset, data.byteLength).getUint32(offset, true);
+}
+
+function readBigUInt64LE(data: Uint8Array, offset: number): bigint {
+  return new DataView(data.buffer, data.byteOffset, data.byteLength).getBigUint64(offset, true);
+}
+
 function parseSystemInstruction(
   programId: string,
   accounts: string[],
-  _data: Buffer,
+  data: Uint8Array,
 ): Partial<ParsedInstruction> {
   if (programId !== SystemProgram.programId.toBase58()) return {};
 
-  const instructionIndex = _data.length > 0 ? _data.readUInt32LE(0) : -1;
+  const instructionIndex = data.length >= 4 ? readUInt32LE(data, 0) : -1;
 
   switch (instructionIndex) {
     case 2:
@@ -38,14 +55,14 @@ function parseSystemInstruction(
         data: {
           from: accounts[0],
           to: accounts[1],
-          lamports: _data.length >= 12 ? Number(_data.readBigUInt64LE(4)) : 0,
+          lamports: data.length >= 12 ? Number(readBigUInt64LE(data, 4)) : 0,
         },
       };
-    case 4:
+    case 0:
       return { type: 'createAccount' };
-    case 6:
+    case 3:
       return { type: 'createAccountWithSeed' };
-    case 12:
+    case 11:
       return { type: 'transferWithSeed' };
     case 4: // nonceAdvance
       if (accounts.length >= 3) {
@@ -60,10 +77,51 @@ function parseSystemInstruction(
   }
 }
 
-export function parseTransaction(raw: string | Uint8Array): ParsedInstruction[] {
-  const bytes = typeof raw === 'string' ? Buffer.from(raw, 'base64') : raw;
+function parseTokenInstruction(programId: string, data: Uint8Array): Partial<ParsedInstruction> {
+  if (!['TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA', 'TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb'].includes(programId)) {
+    return {};
+  }
 
-  let instructions: { programId: PublicKey; keys: { pubkey: PublicKey }[]; data: Buffer }[];
+  const instructionIndex = data[0];
+
+  switch (instructionIndex) {
+    case 4:
+      return {
+        type: 'approve',
+        data: {
+          instructionIndex,
+          amount: data.length >= 9 ? Number(readBigUInt64LE(data, 1)) : undefined,
+        },
+      };
+    case 6:
+      return { type: 'setAuthority', data: { instructionIndex } };
+    case 7:
+      return {
+        type: 'mintTo',
+        data: {
+          instructionIndex,
+          amount: data.length >= 9 ? Number(readBigUInt64LE(data, 1)) : undefined,
+        },
+      };
+    case 8:
+      return {
+        type: 'burn',
+        data: {
+          instructionIndex,
+          amount: data.length >= 9 ? Number(readBigUInt64LE(data, 1)) : undefined,
+        },
+      };
+    case 9:
+      return { type: 'closeAccount', data: { instructionIndex } };
+    default:
+      return { type: `tokenInstruction(${instructionIndex})`, data: { instructionIndex } };
+  }
+}
+
+export function parseTransaction(raw: string | Uint8Array): ParsedInstruction[] {
+  const bytes = typeof raw === 'string' ? decodeBase64(raw) : raw;
+
+  let instructions: { programId: PublicKey; keys: { pubkey: PublicKey }[]; data: Uint8Array }[];
 
   try {
     const versioned = VersionedTransaction.deserialize(bytes);
@@ -73,7 +131,7 @@ export function parseTransaction(raw: string | Uint8Array): ParsedInstruction[] 
     instructions = message.compiledInstructions.map((ix) => ({
       programId: accountKeys[ix.programIdIndex]!,
       keys: ix.accountKeyIndexes.map((idx) => ({ pubkey: accountKeys[idx]! })),
-      data: Buffer.from(ix.data),
+      data: ix.data,
     }));
   } catch {
     const legacy = Transaction.from(bytes);
@@ -88,13 +146,14 @@ export function parseTransaction(raw: string | Uint8Array): ParsedInstruction[] 
     const programId = ix.programId.toBase58();
     const accounts = ix.keys.map((k) => k.pubkey.toBase58());
     const systemParsed = parseSystemInstruction(programId, accounts, ix.data);
+    const tokenParsed = parseTokenInstruction(programId, ix.data);
 
     return {
       programId,
       programName: identifyProgram(programId),
-      type: systemParsed.type ?? 'unknown',
+      type: systemParsed.type ?? tokenParsed.type ?? 'unknown',
       accounts,
-      data: systemParsed.data as Record<string, unknown> | undefined,
+      data: (systemParsed.data ?? tokenParsed.data) as Record<string, unknown> | undefined,
     };
   });
 }

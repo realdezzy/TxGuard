@@ -8,6 +8,9 @@ const SIGNAL_WEIGHTS: Record<SignalType, number> = {
   [SignalType.BLINK_PHISHING]: 35,
   [SignalType.LARGE_TRANSFER]: 5,
   [SignalType.SIMULATION_FAILURE]: 25,
+  [SignalType.TOKEN_APPROVAL]: 30,
+  [SignalType.CLICKJACKING]: 45,
+  [SignalType.WALLET_SPOOFING]: 35,
 };
 
 const LEVEL_MULTIPLIERS: Record<RiskLevel, number> = {

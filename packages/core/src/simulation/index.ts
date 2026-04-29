@@ -7,11 +7,20 @@ import {
 import type { SimulationResult, BalanceChange, RiskSignal } from '../types/index.js';
 import { RiskLevel, SignalType } from '../types/index.js';
 
+function decodeBase64(input: string): Uint8Array {
+  const binary = atob(input);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) {
+    bytes[i] = binary.charCodeAt(i);
+  }
+  return bytes;
+}
+
 export async function simulateTransaction(
   connection: Connection,
   rawTx: string | Uint8Array,
 ): Promise<SimulationResult> {
-  const bytes = typeof rawTx === 'string' ? Buffer.from(rawTx, 'base64') : rawTx;
+  const bytes = typeof rawTx === 'string' ? decodeBase64(rawTx) : rawTx;
 
   let simulationResponse;
 

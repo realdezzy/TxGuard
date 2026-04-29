@@ -1,22 +1,29 @@
 import type { Connection } from '@solana/web3.js';
 
-export enum RiskLevel {
-  SAFE = 'SAFE',
-  LOW = 'LOW',
-  MEDIUM = 'MEDIUM',
-  HIGH = 'HIGH',
-  CRITICAL = 'CRITICAL',
-}
+export const RiskLevel = {
+  SAFE: 'SAFE',
+  LOW: 'LOW',
+  MEDIUM: 'MEDIUM',
+  HIGH: 'HIGH',
+  CRITICAL: 'CRITICAL',
+} as const;
 
-export enum SignalType {
-  ADDRESS_POISONING = 'ADDRESS_POISONING',
-  DURABLE_NONCE = 'DURABLE_NONCE',
-  AUTHORITY_CHANGE = 'AUTHORITY_CHANGE',
-  UNKNOWN_PROGRAM = 'UNKNOWN_PROGRAM',
-  BLINK_PHISHING = 'BLINK_PHISHING',
-  LARGE_TRANSFER = 'LARGE_TRANSFER',
-  SIMULATION_FAILURE = 'SIMULATION_FAILURE',
-}
+export type RiskLevel = (typeof RiskLevel)[keyof typeof RiskLevel];
+
+export const SignalType = {
+  ADDRESS_POISONING: 'ADDRESS_POISONING',
+  DURABLE_NONCE: 'DURABLE_NONCE',
+  AUTHORITY_CHANGE: 'AUTHORITY_CHANGE',
+  UNKNOWN_PROGRAM: 'UNKNOWN_PROGRAM',
+  BLINK_PHISHING: 'BLINK_PHISHING',
+  LARGE_TRANSFER: 'LARGE_TRANSFER',
+  SIMULATION_FAILURE: 'SIMULATION_FAILURE',
+  TOKEN_APPROVAL: 'TOKEN_APPROVAL',
+  CLICKJACKING: 'CLICKJACKING',
+  WALLET_SPOOFING: 'WALLET_SPOOFING',
+} as const;
+
+export type SignalType = (typeof SignalType)[keyof typeof SignalType];
 
 export interface RiskSignal {
   type: SignalType;

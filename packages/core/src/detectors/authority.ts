@@ -35,6 +35,25 @@ export function detectAuthorityChanges(instructions: ParsedInstruction[]): Autho
         },
       });
     }
+
+    if (ix.type === 'approve') {
+      const amount = (ix.data as Record<string, unknown> | undefined)?.amount;
+      signals.push({
+        type: SignalType.TOKEN_APPROVAL,
+        level: amount === Number.MAX_SAFE_INTEGER ? RiskLevel.CRITICAL : RiskLevel.HIGH,
+        title: 'Token Delegate Approval',
+        message:
+          'This transaction approves another account to spend tokens from your token account. ' +
+          'Only approve delegates you explicitly trust.',
+        metadata: {
+          programId: ix.programId,
+          sourceAccount: ix.accounts[0],
+          delegate: ix.accounts[1],
+          owner: ix.accounts[2],
+          amount,
+        },
+      });
+    }
   }
 
   for (const ix of instructions) {

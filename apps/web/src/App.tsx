@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import type { TransactionAnalysis } from '@txguard/core';
+import type { BalanceChange, TransactionAnalysis } from '@txguard/core';
 import { RiskLevel } from '@txguard/core';
 
 export default function App() {
@@ -217,7 +217,7 @@ export default function App() {
                           </tr>
                         </thead>
                         <tbody className="divide-y divide-white/5 text-sm">
-                          {analysis.simulation.balanceChanges.map((change: any, i: number) => (
+                          {analysis.simulation.balanceChanges.map((change: BalanceChange, i: number) => (
                             <tr key={i} className="hover:bg-white/5 transition-colors">
                               <td className="p-4 font-mono text-white/70">{change.account}</td>
                               <td className={`p-4 font-mono font-medium text-right ${change.delta > 0 ? 'text-green-400' : change.delta < 0 ? 'text-red-400' : 'text-white/50'}`}>

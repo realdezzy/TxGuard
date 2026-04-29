@@ -4,7 +4,9 @@ import { RiskLevel } from '@txguard/core';
 
 interface HistoryItem {
   id: string;
-  type: 'blink' | 'transaction';
+  type: 'blink' | 'transaction' | 'browser';
+  title?: string;
+  url?: string;
   analysis: TransactionAnalysis;
   timestamp: number;
 }
@@ -117,10 +119,12 @@ export default function App() {
                     }`} />
                     <div className="text-left">
                       <div className="text-xs font-medium">
-                        {item.type === 'blink' ? 'Blink Action' : 'Transaction'}
+                        {item.type === 'blink' ? 'Blink Action' : item.type === 'browser' ? 'Browser Threat' : 'Transaction'}
                       </div>
                       <div className="text-[10px] text-white/40">
-                        {new Date(item.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                        {item.type === 'browser' && item.title
+                          ? item.title.slice(0, 32)
+                          : new Date(item.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
                       </div>
                     </div>
                   </div>

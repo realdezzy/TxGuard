@@ -56,6 +56,41 @@ export default defineBackground(() => {
       return true;
     }
 
+    if (message.type === 'BROWSER_THREAT') {
+      const report = message.report;
+      if (report?.signals?.length > 0) {
+        const riskScore = Math.min(
+          100,
+          report.signals.reduce((score: number, signal: { level: string }) => {
+            if (signal.level === 'CRITICAL') return score + 45;
+            if (signal.level === 'HIGH') return score + 35;
+            if (signal.level === 'MEDIUM') return score + 20;
+            return score + 10;
+          }, 0),
+        );
+        const analysis = {
+          instructions: [],
+          signals: report.signals,
+          simulation: null,
+          riskScore,
+          riskLevel:
+            riskScore >= 80 ? 'CRITICAL' :
+            riskScore >= 60 ? 'HIGH' :
+            riskScore >= 35 ? 'MEDIUM' :
+            riskScore >= 15 ? 'LOW' : 'SAFE',
+          recommendation: riskScore >= 60 ? 'REJECT' : riskScore >= 25 ? 'CAUTION' : 'APPROVE',
+          explanation: report.signals.map((signal: { message: string }) => signal.message).join('\n'),
+          timestamp: report.timestamp ?? Date.now(),
+        };
+        saveToHistory({ type: 'browser', url: report.url, title: report.title, analysis })
+          .then(() => sendResponse({ success: true }))
+          .catch((err) => sendResponse({ success: false, error: err instanceof Error ? err.message : 'Unknown error' }));
+        return true;
+      }
+      sendResponse({ success: true });
+      return true;
+    }
+
     if (message.type === 'GET_HISTORY') {
       browser.storage.local.get('history').then(data => sendResponse(data.history || []));
       return true;

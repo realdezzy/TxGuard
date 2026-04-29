@@ -4,9 +4,16 @@ import crypto from 'crypto';
 const REDIS_URL = process.env['REDIS_URL'] || 'redis://localhost:6379';
 const CACHE_TTL = 300; // 5 minutes
 
-let client: ReturnType<typeof createClient> | null = null;
+interface CacheClient {
+  connect(): Promise<unknown>;
+  get(key: string): Promise<string | null>;
+  set(key: string, value: string, options?: { EX: number }): Promise<unknown>;
+  on(event: 'error', listener: (err: Error) => void): unknown;
+}
 
-export async function getRedisClient() {
+let client: CacheClient | null = null;
+
+export async function getRedisClient(): Promise<CacheClient> {
   if (!client) {
     client = createClient({ url: REDIS_URL });
     client.on('error', (err: Error) => console.error('Redis Client Error', err));
