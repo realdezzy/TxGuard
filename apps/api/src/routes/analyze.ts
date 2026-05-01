@@ -4,13 +4,13 @@ import { analyzeTransaction } from '@txguard/core';
 import { buildProviderChain } from '../services/providers.js';
 import { getSolanaConnection } from '../services/solana.js';
 import { generateTxHash, getCachedAnalysis, setCachedAnalysis } from '../services/cache.js';
+import { config } from '../services/config.js';
 
 export const analyzeRouter: Router = Router();
 
 const analyzeSchema = z.object({
   transaction: z.string().min(1),
   addressHistory: z.array(z.string()).optional().default([]),
-  rpcUrl: z.string().url().optional(),
 });
 
 analyzeRouter.post('/', async (req, res) => {
@@ -20,7 +20,7 @@ analyzeRouter.post('/', async (req, res) => {
     return;
   }
 
-  const { transaction, addressHistory, rpcUrl } = parsed.data;
+  const { transaction, addressHistory } = parsed.data;
   const txHash = generateTxHash(transaction);
 
   try {
@@ -32,7 +32,7 @@ analyzeRouter.post('/', async (req, res) => {
     }
 
     const analysis = await analyzeTransaction(transaction, {
-      rpcUrl: rpcUrl ?? process.env['SOLANA_RPC_URL'] ?? 'https://api.devnet.solana.com',
+      rpcUrl: config.solanaRpcUrl,
       connection: getSolanaConnection(),
       aiProviders: buildProviderChain(),
       addressHistory,
@@ -42,7 +42,16 @@ analyzeRouter.post('/', async (req, res) => {
 
     res.json(analysis);
   } catch (err) {
-    console.error('Analysis failed:', err);
-    res.status(500).json({ error: 'Analysis failed' });
+    const requestId = (req as any).id ?? 'unknown';
+    const message = err instanceof Error ? err.message : 'Unknown error';
+    const category = message.includes('RPC') || message.includes('simulation')
+      ? 'rpc_error'
+      : message.includes('timeout') || message.includes('Timeout')
+        ? 'timeout'
+        : message.includes('parse') || message.includes('deserialize')
+          ? 'parse_error'
+          : 'internal_error';
+    console.error(JSON.stringify({ requestId, event: 'analysis_failed', category, message }));
+    res.status(500).json({ error: 'Analysis failed', category });
   }
 });

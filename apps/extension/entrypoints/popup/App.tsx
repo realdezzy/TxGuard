@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import type { TransactionAnalysis } from '@txguard/core';
 import { RiskLevel } from '@txguard/core';
+import Settings from './Settings';
 
 interface HistoryItem {
   id: string;
@@ -15,6 +16,8 @@ export default function App() {
   const [history, setHistory] = useState<HistoryItem[]>([]);
   const [selectedItem, setSelectedItem] = useState<HistoryItem | null>(null);
   const [loading, setLoading] = useState(true);
+  const [showSettings, setShowSettings] = useState(false);
+  const [cluster, setCluster] = useState('devnet');
 
   useEffect(() => {
     loadHistory();
@@ -23,10 +26,18 @@ export default function App() {
   const loadHistory = async () => {
     setLoading(true);
     try {
+      const settingsData = await browser.storage.local.get('settings');
+      const settings = (settingsData.settings || {}) as Record<string, any>;
+      const retentionDays = settings.historyRetentionDays || 7;
+      setCluster(settings.cluster || 'devnet');
+      const cutoffTime = Date.now() - retentionDays * 24 * 60 * 60 * 1000;
+
       const response = await browser.runtime.sendMessage({ type: 'GET_HISTORY' });
-      setHistory(response || []);
-      if (response && response.length > 0) {
-        setSelectedItem(response[0]);
+      const validHistory = (response || []).filter((item: HistoryItem) => item.timestamp > cutoffTime);
+
+      setHistory(validHistory);
+      if (validHistory.length > 0) {
+        setSelectedItem(validHistory[0]);
       }
     } catch (err) {
       console.error('Failed to load history:', err);
@@ -46,13 +57,23 @@ export default function App() {
           </div>
           <h1 className="text-base font-bold tracking-tight">TxGuard</h1>
         </div>
-        <div className="text-[10px] bg-white/5 px-2 py-0.5 rounded-full text-white/50 border border-white/10 uppercase tracking-widest font-bold">
-          Devnet
+        <div className="flex items-center gap-3">
+          <div className="text-[10px] bg-white/5 px-2 py-0.5 rounded-full text-white/50 border border-white/10 uppercase tracking-widest font-bold">
+            {cluster}
+          </div>
+          <button onClick={() => setShowSettings(!showSettings)} className="text-white/50 hover:text-white transition-colors">
+            <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+            </svg>
+          </button>
         </div>
       </header>
 
       <main className="flex-1 overflow-y-auto pr-1 custom-scrollbar space-y-4">
-        {loading ? (
+        {showSettings ? (
+          <Settings onClose={() => setShowSettings(false)} />
+        ) : loading ? (
           <div className="h-full flex items-center justify-center italic text-white/20 text-sm">
             Loading security history...
           </div>

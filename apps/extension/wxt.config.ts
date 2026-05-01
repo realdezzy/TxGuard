@@ -12,5 +12,8 @@ export default defineConfig({
     description: 'AI-Powered Wallet Safety Layer for Solana',
     permissions: ['activeTab', 'storage'],
     host_permissions: ['<all_urls>'],
+    content_security_policy: {
+      extension_pages: "script-src 'self'; object-src 'self';",
+    },
   },
 });

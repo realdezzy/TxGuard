@@ -1,5 +1,7 @@
 import { RiskLevel, SignalType, type RiskSignal } from '../types/index.js';
 
+export const SCORING_VERSION = '1.0.0';
+
 const SIGNAL_WEIGHTS: Record<SignalType, number> = {
   [SignalType.ADDRESS_POISONING]: 40,
   [SignalType.DURABLE_NONCE]: 30,
@@ -7,10 +9,17 @@ const SIGNAL_WEIGHTS: Record<SignalType, number> = {
   [SignalType.UNKNOWN_PROGRAM]: 10,
   [SignalType.BLINK_PHISHING]: 35,
   [SignalType.LARGE_TRANSFER]: 5,
+  // SIMULATION_FAILURE means the tx will likely revert — lower severity than unavailability
+  // which leaves the analysis completely blind.
   [SignalType.SIMULATION_FAILURE]: 25,
+  [SignalType.SIMULATION_UNAVAILABLE]: 35,
   [SignalType.TOKEN_APPROVAL]: 30,
+  [SignalType.TOKEN_REVOCATION]: 5,
+  [SignalType.TOKEN_ACCOUNT_CLOSURE]: 25,
+  [SignalType.TOKEN_ACCOUNT_FREEZE]: 25,
   [SignalType.CLICKJACKING]: 45,
   [SignalType.WALLET_SPOOFING]: 35,
+  [SignalType.COMPUTE_BUDGET_MANIPULATION]: 15,
 };
 
 const LEVEL_MULTIPLIERS: Record<RiskLevel, number> = {

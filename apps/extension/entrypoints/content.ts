@@ -33,6 +33,11 @@ const SENSITIVE_TEXT = [
   'phantom',
   'solflare',
   'backpack',
+  'seed phrase',
+  'recovery phrase',
+  'secret recovery',
+  'private key',
+  'mnemonic',
 ];
 
 function escapeHtml(value: string): string {
@@ -112,25 +117,43 @@ export default defineContentScript({
     console.log('TxGuard content script injected');
 
     const browserThreats = new Map<string, RiskSignal>();
+    const MAX_THREATS = 20;
 
-    const rememberThreat = (signal: RiskSignal) => {
-      const key = `${signal.type}:${signal.title}:${JSON.stringify(signal.metadata ?? {})}`;
-      browserThreats.set(key, signal);
+    const rememberThreat = (signal: RiskSignal, scope: 'page' | 'frame' | 'click' = 'page') => {
+      if (browserThreats.size >= MAX_THREATS) return;
+      const signalWithScope = {
+        ...signal,
+        metadata: { ...signal.metadata, scope }
+      };
+      const key = `${signalWithScope.type}:${signalWithScope.title}:${JSON.stringify(signalWithScope.metadata ?? {})}`;
+      browserThreats.set(key, signalWithScope);
     };
+
+    let lastReportTimestamp = 0;
+    const REPORT_THROTTLE_MS = 5000;
+
+    let trustedOrigins: string[] = [];
 
     const reportThreats = () => {
       if (browserThreats.size === 0) return;
+      const now = Date.now();
+      if (now - lastReportTimestamp < REPORT_THROTTLE_MS) return;
+      lastReportTimestamp = now;
+
       const report: BrowserThreatReport = {
         url: location.href,
         title: document.title,
         signals: [...browserThreats.values()],
-        timestamp: Date.now(),
+        timestamp: now,
       };
       browser.runtime.sendMessage({ type: 'BROWSER_THREAT', report }).catch(() => undefined);
     };
 
+    const isOriginTrusted = () => trustedOrigins.some(o => location.origin === o);
+
     const detectFramingRisk = () => {
       if (window.top === window.self) return;
+      if (isOriginTrusted()) return;
       rememberThreat({
         type: SignalType.CLICKJACKING,
         level: RiskLevel.HIGH,
@@ -138,10 +161,11 @@ export default defineContentScript({
         message:
           'This page is embedded inside another page. Embedded wallet or transaction prompts can be used in clickjacking attacks.',
         metadata: { url: location.href, referrer: document.referrer },
-      });
+      }, 'frame');
     };
 
     const detectOverlayRisk = () => {
+      if (isOriginTrusted()) return;
       const viewportArea = window.innerWidth * window.innerHeight;
       if (viewportArea <= 0) return;
 
@@ -178,6 +202,25 @@ export default defineContentScript({
     };
 
     const detectWalletSpoofingRisk = () => {
+      const seedPhraseTerms = ['seed phrase', 'recovery phrase', 'secret recovery', 'private key', 'mnemonic'];
+      const inputsAndLabels = [...document.querySelectorAll('input, textarea, [contenteditable], label')];
+      
+      const asksForSeedPhrase = inputsAndLabels.some(el => {
+        const text = (el.textContent || (el as HTMLInputElement).value || '').toLowerCase();
+        return seedPhraseTerms.some(term => text.includes(term));
+      });
+
+      if (asksForSeedPhrase) {
+        rememberThreat({
+          type: SignalType.WALLET_SPOOFING,
+          level: RiskLevel.CRITICAL,
+          title: 'Critical: Seed Phrase Requested',
+          message: 'This page is asking for your seed phrase or private key. Never enter this information on a website. It is almost certainly a scam.',
+          metadata: { url: location.href },
+        }, 'page');
+        return;
+      }
+
       const walletLikeControls = [...document.querySelectorAll('button, a, [role="button"], input[type="button"], input[type="submit"]')]
         .filter((element) => isVisible(element) && hasSensitiveText(element));
 
@@ -190,9 +233,43 @@ export default defineContentScript({
             'This page shows multiple wallet-like controls but no Solana provider is available in the page context. Verify the site before interacting.',
           metadata: {
             url: location.href,
-            controls: walletLikeControls.slice(0, 5).map((element) => (element.textContent ?? '').trim().slice(0, 80)),
+            controls: walletLikeControls.slice(0, 5).map((element) => escapeHtml((element.textContent ?? '').trim().slice(0, 80))),
           },
-        });
+        }, 'page');
+      }
+
+      // Provider mismatch detection
+      const solana = (window as any).solana;
+      const phantomSolana = (window as any).phantom?.solana;
+      if (solana && phantomSolana && solana !== phantomSolana) {
+        const solanaKey = solana.publicKey?.toBase58?.() ?? null;
+        const phantomKey = phantomSolana.publicKey?.toBase58?.() ?? null;
+        if (solanaKey && phantomKey && solanaKey !== phantomKey) {
+          rememberThreat({
+            type: SignalType.WALLET_SPOOFING,
+            level: RiskLevel.HIGH,
+            title: 'Wallet Provider Mismatch',
+            message: 'window.solana and window.phantom.solana expose different public keys. A malicious script may have injected a fake provider.',
+            metadata: { url: location.href },
+          }, 'page');
+        }
+      }
+
+      // Wallet download prompt from non-wallet domain
+      const walletDomains = ['phantom.app', 'solflare.com', 'backpack.app', 'glow.app'];
+      const isWalletDomain = walletDomains.some(d => location.hostname.endsWith(d));
+      if (!isWalletDomain) {
+        const downloadTerms = ['download phantom', 'install solflare', 'get backpack', 'download wallet'];
+        const pageText = (document.body.textContent ?? '').toLowerCase();
+        if (downloadTerms.some(term => pageText.includes(term))) {
+          rememberThreat({
+            type: SignalType.WALLET_SPOOFING,
+            level: RiskLevel.MEDIUM,
+            title: 'Suspicious Wallet Download Prompt',
+            message: 'This page prompts you to download a wallet extension but is not an official wallet domain. Verify the source before downloading.',
+            metadata: { url: location.href, domain: location.hostname },
+          }, 'page');
+        }
       }
     };
 
@@ -214,12 +291,17 @@ export default defineContentScript({
         metadata: {
           targetTag: target.tagName,
           topTag: topVisible.tagName,
-          targetText: (target.textContent ?? '').trim().slice(0, 80),
-          topText: (topVisible.textContent ?? '').trim().slice(0, 80),
+          targetText: escapeHtml((target.textContent ?? '').trim().slice(0, 80)),
+          topText: escapeHtml((topVisible.textContent ?? '').trim().slice(0, 80)),
         },
-      });
+      }, 'click');
       reportThreats();
     };
+
+    browser.storage.local.get('settings').then(data => {
+      const settings = (data.settings || {}) as Record<string, any>;
+      trustedOrigins = settings.trustedOrigins ?? [];
+    }).catch(() => undefined);
 
     detectFramingRisk();
     detectOverlayRisk();
@@ -228,29 +310,33 @@ export default defineContentScript({
     window.addEventListener('click', detectClickTargetMismatch, true);
 
     window.addEventListener('message', (event) => {
-      if (event.data?.type === 'TXGUARD_ANALYZE_TX') {
-        browser.runtime.sendMessage({
-          type: 'ANALYZE_TRANSACTION',
-          transaction: event.data.transaction,
-          eventId: event.data.eventId
-        }).then((response) => {
-          if (response.analysis && response.analysis.riskScore >= 50) {
-            showGuardianOverlay(response.analysis, (approved) => {
-              window.postMessage({
-                type: 'TXGUARD_RESULT',
-                eventId: event.data.eventId,
-                approved
-              }, '*');
-            });
-          } else {
+      if (event.source !== window) return;
+      if (event.origin !== window.location.origin) return;
+      const data = event.data;
+      if (!data || typeof data !== 'object' || data.type !== 'TXGUARD_ANALYZE_TX') return;
+      if (typeof data.transaction !== 'string' || typeof data.eventId !== 'string') return;
+
+      browser.runtime.sendMessage({
+        type: 'ANALYZE_TRANSACTION',
+        transaction: data.transaction,
+        eventId: data.eventId
+      }).then((response) => {
+        if (response.analysis && response.analysis.riskScore >= 50) {
+          showGuardianOverlay(response.analysis, (approved) => {
             window.postMessage({
               type: 'TXGUARD_RESULT',
-              eventId: event.data.eventId,
-              approved: true
+              eventId: data.eventId,
+              approved
             }, '*');
-          }
-        });
-      }
+          });
+        } else {
+          window.postMessage({
+            type: 'TXGUARD_RESULT',
+            eventId: data.eventId,
+            approved: true
+          }, '*');
+        }
+      });
     });
 
     function showGuardianOverlay(analysis: TransactionAnalysis, onDecision: DecisionHandler) {
@@ -298,12 +384,12 @@ export default defineContentScript({
 
         <div style="display: grid; grid-template-cols: 1fr 1fr; gap: 16px; margin-bottom: 32px;">
            <div style="background: rgba(255,255,255,0.02); padding: 12px; border-radius: 12px; border: 1px solid rgba(255,255,255,0.05);">
-             <div style="font-size: 10px; color: rgba(255,255,255,0.4); text-transform: uppercase;">Potential Loss</div>
-             <div style="font-size: 18px; font-weight: 700; color: #ef4444;">${Math.abs(analysis.riskScore > 80 ? 100 : 0).toFixed(2)}% of asset</div>
+             <div style="font-size: 10px; color: rgba(255,255,255,0.4); text-transform: uppercase;">Risk Score</div>
+             <div style="font-size: 18px; font-weight: 700; color: #ef4444;">${riskScore}/100</div>
            </div>
            <div style="background: rgba(255,255,255,0.02); padding: 12px; border-radius: 12px; border: 1px solid rgba(255,255,255,0.05);">
-             <div style="font-size: 10px; color: rgba(255,255,255,0.4); text-transform: uppercase;">Confidence</div>
-             <div style="font-size: 18px; font-weight: 700; color: #10b981;">98.4%</div>
+             <div style="font-size: 10px; color: rgba(255,255,255,0.4); text-transform: uppercase;">Signals</div>
+             <div style="font-size: 18px; font-weight: 700; color: #f97316;">${escapeHtml(String(analysis.signals.length))} detected</div>
            </div>
         </div>
 

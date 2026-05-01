@@ -1,7 +1,7 @@
 import { createClient } from 'redis';
 import crypto from 'crypto';
+import { config } from './config.js';
 
-const REDIS_URL = process.env['REDIS_URL'] || 'redis://localhost:6379';
 const CACHE_TTL = 300; // 5 minutes
 
 interface CacheClient {
@@ -15,7 +15,12 @@ let client: CacheClient | null = null;
 
 export async function getRedisClient(): Promise<CacheClient> {
   if (!client) {
-    client = createClient({ url: REDIS_URL });
+    client = createClient({
+      url: config.redisUrl,
+      socket: {
+        connectTimeout: 5000,
+      },
+    });
     client.on('error', (err: Error) => console.error('Redis Client Error', err));
     await client.connect();
   }

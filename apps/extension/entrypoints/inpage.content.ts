@@ -6,6 +6,33 @@ export default defineContentScript({
   main() {
     const log = (...args: any[]) => console.log('[TxGuard Inpage]', ...args);
 
+    const analyzeTx = (transaction: any): Promise<boolean> => {
+      return new Promise((resolve, reject) => {
+        const eventId = crypto.randomUUID();
+        
+        const timeout = setTimeout(() => {
+          window.removeEventListener('message', handleResponse);
+          reject(new Error('TxGuard analysis timed out'));
+        }, 30_000);
+
+        const handleResponse = (event: MessageEvent) => {
+          if (event.data?.type === 'TXGUARD_RESULT' && event.data?.eventId === eventId) {
+            clearTimeout(timeout);
+            window.removeEventListener('message', handleResponse);
+            resolve(event.data.approved);
+          }
+        };
+
+        window.addEventListener('message', handleResponse);
+
+        window.postMessage({
+          type: 'TXGUARD_ANALYZE_TX',
+          eventId,
+          transaction: transaction.serialize({ requireAllSignatures: false }).toString('base64'),
+        }, '*');
+      });
+    };
+
     const wrapSolanaProvider = (provider: any) => {
       if (!provider || provider.__isTxGuardWrapped) return;
 
@@ -17,36 +44,24 @@ export default defineContentScript({
       if (originalSignTransaction) {
         provider.signTransaction = async (transaction: any) => {
           log('Intercepted signTransaction');
-
-          return new Promise((resolve, reject) => {
-            const eventId = Math.random().toString(36).substring(7);
-            
-            const handleResponse = (event: MessageEvent) => {
-              if (event.data?.type === 'TXGUARD_RESULT' && event.data?.eventId === eventId) {
-                window.removeEventListener('message', handleResponse);
-                
-                if (event.data.approved) {
-                  resolve(originalSignTransaction(transaction));
-                } else {
-                  reject(new Error('Transaction rejected by TxGuard'));
-                }
-              }
-            };
-
-            window.addEventListener('message', handleResponse);
-
-            window.postMessage({
-              type: 'TXGUARD_ANALYZE_TX',
-              eventId,
-              transaction: transaction.serialize({ requireAllSignatures: false }).toString('base64'),
-            }, '*');
-          });
+          const approved = await analyzeTx(transaction);
+          if (approved) {
+            return originalSignTransaction(transaction);
+          } else {
+            throw new Error('Transaction rejected by TxGuard');
+          }
         };
       }
 
       if (originalSignAllTransactions) {
         provider.signAllTransactions = async (transactions: any[]) => {
           log('Intercepted signAllTransactions');
+          for (const tx of transactions) {
+            const approved = await analyzeTx(tx);
+            if (!approved) {
+              throw new Error('Batch transaction rejected by TxGuard');
+            }
+          }
           return originalSignAllTransactions(transactions);
         };
       }
@@ -63,7 +78,23 @@ export default defineContentScript({
       }
     };
 
-    setInterval(scan, 1000);
+    const observer = new MutationObserver((mutations) => {
+      for (const m of mutations) {
+        if (m.addedNodes.length > 0) {
+          for (const node of m.addedNodes) {
+            if (node.nodeName === 'SCRIPT') {
+              scan();
+              return;
+            }
+          }
+        }
+      }
+    });
+    
+    if (document.documentElement) {
+      observer.observe(document.documentElement, { childList: true, subtree: true });
+    }
+
     scan();
   },
 });

@@ -1,9 +1,14 @@
 import { defineBackground } from '#imports';
+import type { TransactionAnalysis } from '@txguard/core';
 
 export default defineBackground(() => {
   console.log('TxGuard background worker started');
 
-  const apiUrl = import.meta.env.VITE_API_URL || 'http://localhost:3001';
+  async function getApiUrl(): Promise<string> {
+    const data = await browser.storage.local.get('settings');
+    const settings = (data.settings || {}) as Record<string, any>;
+    return settings.apiUrl || import.meta.env.VITE_API_URL || 'http://localhost:3001';
+  }
 
   async function saveToHistory(item: any) {
     const data = await browser.storage.local.get('history');
@@ -17,41 +22,57 @@ export default defineBackground(() => {
 
   browser.runtime.onMessage.addListener((message: any, sender: any, sendResponse: (response?: any) => void) => {
     if (message.type === 'ANALYZE_BLINK') {
-      fetch(`${apiUrl}/api/blink/preview`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          url: message.url,
-          account: '11111111111111111111111111111111' 
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 10_000);
+      
+      getApiUrl().then(apiUrl => {
+        fetch(`${apiUrl}/api/blink/preview`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            url: message.url,
+            account: '11111111111111111111111111111111' 
+          }),
+          signal: controller.signal
         })
-      })
-      .then(res => res.json())
-      .then(async data => {
-        await saveToHistory({ type: 'blink', url: message.url, analysis: data.analysis });
-        sendResponse({ success: true, data });
-      })
-      .catch(err => {
-        console.error('Blink analysis failed:', err);
-        sendResponse({ success: false, error: err.message });
+        .then(res => res.json())
+        .then(async data => {
+          clearTimeout(timeoutId);
+          await saveToHistory({ type: 'blink', url: message.url, analysis: data.analysis });
+          sendResponse({ success: true, data });
+        })
+        .catch(err => {
+          clearTimeout(timeoutId);
+          console.error('Blink analysis failed:', err);
+          sendResponse({ success: false, error: err.name === 'AbortError' ? 'Analysis timed out' : err.message });
+        });
       });
       return true;
     }
 
     if (message.type === 'ANALYZE_TRANSACTION') {
-      fetch(`${apiUrl}/api/analyze`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ transaction: message.transaction })
-      })
-      .then(res => res.json())
-      .then(async analysis => {
-        await saveToHistory({ type: 'transaction', analysis });
-        
-        sendResponse({ analysis });
-      })
-      .catch(err => {
-        console.error('Transaction analysis failed:', err);
-        sendResponse({ approved: false, error: err.message });
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 10_000);
+      
+      getApiUrl().then(apiUrl => {
+        fetch(`${apiUrl}/api/analyze`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ transaction: message.transaction }),
+          signal: controller.signal
+        })
+        .then(res => res.json())
+        .then(async (analysis: TransactionAnalysis) => {
+          clearTimeout(timeoutId);
+          await saveToHistory({ type: 'transaction', analysis });
+          
+          sendResponse({ analysis });
+        })
+        .catch(err => {
+          clearTimeout(timeoutId);
+          console.error('Transaction analysis failed:', err);
+          sendResponse({ approved: false, error: err.name === 'AbortError' ? 'Analysis timed out' : err.message });
+        });
       });
       return true;
     }

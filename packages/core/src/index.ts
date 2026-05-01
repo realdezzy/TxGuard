@@ -10,61 +10,78 @@ import {
   detectAddressPoisoning,
   detectDurableNonce,
   detectAuthorityChanges,
+  detectComputeBudgetManipulation,
+  detectWritablePatterns,
 } from './detectors/index.js';
-import { simulateTransaction, simulationToSignal } from './simulation/index.js';
-import { calculateRiskScore, scoreToRiskLevel, scoreToRecommendation } from './risk/scoring.js';
+import {
+  simulateTransaction,
+  simulationToSignal,
+  simulationUnavailableToSignal,
+} from './simulation/index.js';
+import { calculateRiskScore, scoreToRiskLevel, scoreToRecommendation, SCORING_VERSION } from './risk/scoring.js';
 import { explainTransaction } from './ai/explainer.js';
+
+export function runDetectors(
+  instructions: import('./types/index.js').ParsedInstruction[],
+  addressHistory: string[] = [],
+  similarityThreshold = 0.85,
+): RiskSignal[] {
+  const signals: RiskSignal[] = [];
+
+  const recipients = instructions
+    .filter((ix) => ix.type === 'transfer' && ix.data)
+    .map((ix) => (ix.data as Record<string, string>).to)
+    .filter((addr): addr is string => typeof addr === 'string');
+
+  for (const recipient of recipients) {
+    const result = detectAddressPoisoning(
+      recipient,
+      addressHistory,
+      similarityThreshold,
+    );
+    if (result.signal) signals.push(result.signal);
+  }
+
+  const nonceResult = detectDurableNonce(instructions);
+  if (nonceResult.signal) signals.push(nonceResult.signal);
+
+  const authorityResult = detectAuthorityChanges(instructions);
+  signals.push(...authorityResult.signals);
+
+  const writableResult = detectWritablePatterns(instructions);
+  signals.push(...writableResult.signals);
+
+  const budgetResult = detectComputeBudgetManipulation(instructions, signals);
+  if (budgetResult.signal) signals.push(budgetResult.signal);
+
+  return signals;
+}
 
 export async function analyzeTransaction(
   rawTx: string | Uint8Array,
   config: GuardianConfig,
 ): Promise<TransactionAnalysis> {
-  const instructions = parseTransaction(rawTx);
-  const signals: RiskSignal[] = [];
-
-  const runDetectors = async (): Promise<RiskSignal[]> => {
-    const localSignals: RiskSignal[] = [];
-    
-    const recipients = instructions
-      .filter((ix) => ix.type === 'transfer' && ix.data)
-      .map((ix) => (ix.data as Record<string, string>).to)
-      .filter((addr): addr is string => typeof addr === 'string');
-
-    for (const recipient of recipients) {
-      const result = detectAddressPoisoning(
-        recipient,
-        config.addressHistory ?? [],
-        config.similarityThreshold,
-      );
-      if (result.signal) localSignals.push(result.signal);
-    }
-
-    const nonceResult = detectDurableNonce(instructions);
-    if (nonceResult.signal) localSignals.push(nonceResult.signal);
-
-    const authorityResult = detectAuthorityChanges(instructions);
-    localSignals.push(...authorityResult.signals);
-
-    return localSignals;
-  };
+  const connection = config.connection || new Connection(config.rpcUrl, 'confirmed');
+  const instructions = await parseTransaction(rawTx, connection);
 
   const runSimulation = async (): Promise<{ simulation: SimulationResult | null; signal: RiskSignal | null }> => {
-    const connection = config.connection || new Connection(config.rpcUrl, 'confirmed');
     try {
-      const simulation = await simulateTransaction(connection, rawTx);
+      const simulation = await simulateTransaction(connection, rawTx, {
+        timeoutMs: config.simulationTimeoutMs,
+      });
       const simSignal = simulationToSignal(simulation);
       return { simulation, signal: simSignal };
-    } catch {
-      return { simulation: null, signal: null };
+    } catch (err) {
+      return { simulation: null, signal: simulationUnavailableToSignal(err) };
     }
   };
 
   const [detectorSignals, simResult] = await Promise.all([
-    runDetectors(),
-    runSimulation()
+    Promise.resolve(runDetectors(instructions, config.addressHistory, config.similarityThreshold)),
+    runSimulation(),
   ]);
 
-  signals.push(...detectorSignals);
+  const signals: RiskSignal[] = [...detectorSignals];
   if (simResult.signal) signals.push(simResult.signal);
 
   const riskScore = calculateRiskScore(signals);
@@ -79,6 +96,7 @@ export async function analyzeTransaction(
     riskLevel,
     recommendation,
     timestamp: Date.now(),
+    scoringVersion: SCORING_VERSION,
   };
 
   const explanation = await explainTransaction(partialAnalysis, config.aiProviders);
@@ -89,8 +107,12 @@ export async function analyzeTransaction(
 export * from './types/index.js';
 export * from './parser/index.js';
 export * from './detectors/index.js';
-export { simulateTransaction, simulationToSignal } from './simulation/index.js';
-export { calculateRiskScore, scoreToRiskLevel, scoreToRecommendation } from './risk/scoring.js';
+export {
+  simulateTransaction,
+  simulationToSignal,
+  simulationUnavailableToSignal,
+} from './simulation/index.js';
+export { calculateRiskScore, scoreToRiskLevel, scoreToRecommendation, SCORING_VERSION } from './risk/scoring.js';
 export { explainTransaction, buildPrompt, templateExplanation } from './ai/explainer.js';
 export {
   OpenAIProvider,

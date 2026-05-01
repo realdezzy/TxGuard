@@ -1,5 +1,8 @@
 import type { Connection } from '@solana/web3.js';
 
+// u64 max value for token amount comparisons. JS cannot represent this exactly as a number.
+export const U64_MAX = 18_446_744_073_709_551_615n;
+
 export const RiskLevel = {
   SAFE: 'SAFE',
   LOW: 'LOW',
@@ -18,9 +21,14 @@ export const SignalType = {
   BLINK_PHISHING: 'BLINK_PHISHING',
   LARGE_TRANSFER: 'LARGE_TRANSFER',
   SIMULATION_FAILURE: 'SIMULATION_FAILURE',
+  SIMULATION_UNAVAILABLE: 'SIMULATION_UNAVAILABLE',
   TOKEN_APPROVAL: 'TOKEN_APPROVAL',
+  TOKEN_REVOCATION: 'TOKEN_REVOCATION',
+  TOKEN_ACCOUNT_CLOSURE: 'TOKEN_ACCOUNT_CLOSURE',
+  TOKEN_ACCOUNT_FREEZE: 'TOKEN_ACCOUNT_FREEZE',
   CLICKJACKING: 'CLICKJACKING',
   WALLET_SPOOFING: 'WALLET_SPOOFING',
+  COMPUTE_BUDGET_MANIPULATION: 'COMPUTE_BUDGET_MANIPULATION',
 } as const;
 
 export type SignalType = (typeof SignalType)[keyof typeof SignalType];
@@ -33,11 +41,18 @@ export interface RiskSignal {
   metadata?: Record<string, unknown>;
 }
 
+export interface AccountMeta {
+  address: string;
+  isSigner: boolean;
+  isWritable: boolean;
+}
+
 export interface ParsedInstruction {
   programId: string;
   programName: string;
   type: string;
   accounts: string[];
+  accountMeta: AccountMeta[];
   data?: Record<string, unknown>;
 }
 
@@ -47,6 +62,8 @@ export interface BalanceChange {
   after: number;
   delta: number;
   token?: string;
+  mint?: string;
+  owner?: string;
 }
 
 export interface SimulationResult {
@@ -55,6 +72,9 @@ export interface SimulationResult {
   logs: string[];
   balanceChanges: BalanceChange[];
   unitsConsumed: number;
+  slot?: number;
+  replaceRecentBlockhash?: boolean;
+  cluster?: string;
 }
 
 export interface TransactionAnalysis {
@@ -66,6 +86,7 @@ export interface TransactionAnalysis {
   recommendation: 'APPROVE' | 'CAUTION' | 'REJECT';
   explanation: string;
   timestamp: number;
+  scoringVersion?: string;
 }
 
 export interface AIProvider {
@@ -80,4 +101,5 @@ export interface GuardianConfig {
   addressHistory?: string[];
   knownContacts?: Map<string, string>;
   similarityThreshold?: number;
+  simulationTimeoutMs?: number;
 }

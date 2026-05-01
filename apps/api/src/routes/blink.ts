@@ -2,6 +2,7 @@ import { Router } from 'express';
 import { z } from 'zod';
 import { analyzeBlinkUrl, fetchBlinkPayload, analyzeTransaction } from '@txguard/core';
 import { buildProviderChain } from '../services/providers.js';
+import { config } from '../services/config.js';
 
 export const blinkRouter: Router = Router();
 
@@ -25,7 +26,19 @@ blinkRouter.post('/preview', async (req, res) => {
     return;
   }
 
-  const payload = await fetchBlinkPayload(url, account);
+  // Wrap fetchBlinkPayload with a timeout
+  const payloadPromise = fetchBlinkPayload(url, account);
+  const timeoutPromise = new Promise<never>((_, reject) =>
+    setTimeout(() => reject(new Error('Blink payload fetch timed out')), 5000),
+  );
+
+  let payload;
+  try {
+    payload = await Promise.race([payloadPromise, timeoutPromise]);
+  } catch (err: any) {
+    res.status(504).json({ error: err.message });
+    return;
+  }
 
   if (!payload.transaction) {
     res.json({
@@ -38,7 +51,7 @@ blinkRouter.post('/preview', async (req, res) => {
 
   try {
     const analysis = await analyzeTransaction(payload.transaction, {
-      rpcUrl: process.env['SOLANA_RPC_URL'] ?? 'https://api.devnet.solana.com',
+      rpcUrl: config.solanaRpcUrl,
       aiProviders: buildProviderChain(),
     });
 
@@ -48,7 +61,9 @@ blinkRouter.post('/preview', async (req, res) => {
 
     res.json({ blink: blinkAnalysis, analysis });
   } catch (err) {
-    console.error('Blink analysis failed:', err);
+    const requestId = (req as any).id ?? 'unknown';
+    const message = err instanceof Error ? err.message : 'Unknown error';
+    console.error(JSON.stringify({ requestId, event: 'blink_analysis_failed', message }));
     res.status(500).json({ error: 'Blink analysis failed' });
   }
 });

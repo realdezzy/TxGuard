@@ -1,3 +1,5 @@
 export { detectAddressPoisoning, type AddressPoisoningResult } from './address-poisoning.js';
 export { detectDurableNonce, type DurableNonceResult } from './durable-nonce.js';
 export { detectAuthorityChanges, type AuthorityChangeResult } from './authority.js';
+export { detectComputeBudgetManipulation, type ComputeBudgetResult } from './compute-budget.js';
+export { detectWritablePatterns, type WritablePatternResult } from './writable-pattern.js';
