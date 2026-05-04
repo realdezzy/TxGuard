@@ -1,14 +1,12 @@
 import type { NextFunction, Request, Response } from 'express';
 import type { ApiConfig } from '../services/config.js';
 
+import crypto from 'node:crypto';
+
 // Constant-time string comparison to prevent timing attacks on the key.
 function safeEqual(a: string, b: string): boolean {
   if (a.length !== b.length) return false;
-  let diff = 0;
-  for (let i = 0; i < a.length; i++) {
-    diff |= a.charCodeAt(i) ^ b.charCodeAt(i);
-  }
-  return diff === 0;
+  return crypto.timingSafeEqual(Buffer.from(a), Buffer.from(b));
 }
 
 export function apiKeyAuth(config: Pick<ApiConfig, 'apiKey'>) {

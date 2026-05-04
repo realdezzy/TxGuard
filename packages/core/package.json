@@ -12,7 +12,7 @@
     "build": "tsc",
     "test": "vitest run",
     "test:watch": "vitest",
-    "benchmark": "tsx src/benchmark/index.ts",
+    "benchmark": "tsx src/benchmark/cli.ts",
     "lint": "tsc --noEmit",
     "clean": "rm -rf dist *.tsbuildinfo"
   },

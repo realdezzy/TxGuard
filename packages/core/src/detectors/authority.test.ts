@@ -157,14 +157,10 @@ describe('detectAuthorityChanges', () => {
   });
 
   describe('unknown program', () => {
-    it('emits UNKNOWN_PROGRAM MEDIUM', () => {
+    it('does not emit UNKNOWN_PROGRAM (moved to program-reputation detector)', () => {
       const ix = makeIx({ programId: 'SomeRand0mProgramXXXXXXXXXXXXXXXXXXXXXXXXXX', programName: 'Unknown Program', type: 'unknown' });
       const { signals } = detectAuthorityChanges([ix]);
-      expect(signals).toEqual(
-        expect.arrayContaining([
-          expect.objectContaining({ type: SignalType.UNKNOWN_PROGRAM, level: RiskLevel.MEDIUM }),
-        ]),
-      );
+      expect(signals.filter((s) => s.type === SignalType.UNKNOWN_PROGRAM)).toHaveLength(0);
     });
   });
 

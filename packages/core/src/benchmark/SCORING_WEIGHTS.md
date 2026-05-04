@@ -1,47 +1,66 @@
 # TxGuard Scoring Weights & Thresholds
 
-**Version:** 1.0.0
-**Last Updated:** May 1, 2026
+> This file is generated from values in `scoring.ts`. Do not edit manually.
 
-This document tracks the rationale and values for the deterministic safety engine scoring.
+**Version:** 1.1.0
 
 ## Signal Weights
 
-| Signal | Weight | Rationale |
-|---|---|---|
-| `ADDRESS_POISONING` | 40 | High likelihood of intent to deceive, but could be user error (copying wrong address). |
-| `DURABLE_NONCE` | 30 | Rare in normal usage, often used by drainers to delay signature submission. |
-| `TOKEN_APPROVAL` | 35 | Severe risk if amount is unlimited or recipient is untrusted. |
-| `TOKEN_REVOCATION` | -10 | Protective action, reduces risk score. |
-| `TOKEN_ACCOUNT_CLOSURE` | 20 | Normal for dust collection, but high risk if sweeping many accounts. |
-| `TOKEN_ACCOUNT_FREEZE` | 25 | Can be used maliciously to lock user funds before a drain. |
-| `AUTHORITY_CHANGE` | 45 | Transferring ownership or mint authority is almost always critical outside of specific DeFi actions. |
-| `SIMULATION_FAILURE` | 35 | Transactions that fail simulation are inherently risky to sign. |
-| `SIMULATION_UNAVAILABLE` | 35 | Lack of visibility increases risk. |
-| `LARGE_TRANSFER` | 20 | Context-dependent, amplifies existing signals. |
-| `UNKNOWN_PROGRAM` | 15 | interacting with unverified or obscure contracts. |
-| `COMPUTE_BUDGET_MANIPULATION` | 15 | Often used by drainers to outbid legitimate transactions during a sweep. |
-| `WALLET_SPOOFING` | 100 | Unambiguous browser-level threat (phishing). |
-| `CLICKJACKING` | 100 | Unambiguous browser-level threat (UI redressing). |
-| `BLINK_PHISHING` | 80 | Malicious Actions payload. |
+Source: `SIGNAL_WEIGHTS` in `packages/core/src/risk/scoring.ts`
 
-## Multipliers by Level
+| Signal | Weight |
+|---|---|
+| `ADDRESS_POISONING` | 40 |
+| `DURABLE_NONCE` | 30 |
+| `AUTHORITY_CHANGE` | 20 |
+| `UNKNOWN_PROGRAM` | 10 |
+| `BLINK_PHISHING` | 35 |
+| `LARGE_TRANSFER` | 5 |
+| `SIMULATION_FAILURE` | 25 |
+| `SIMULATION_UNAVAILABLE` | 35 |
+| `TOKEN_APPROVAL` | 30 |
+| `TOKEN_REVOCATION` | 5 |
+| `TOKEN_ACCOUNT_CLOSURE` | 25 |
+| `TOKEN_ACCOUNT_FREEZE` | 25 |
+| `CLICKJACKING` | 45 |
+| `WALLET_SPOOFING` | 35 |
+| `COMPUTE_BUDGET_MANIPULATION` | 15 |
+
+## Risk Level Multipliers
+
+Source: `LEVEL_MULTIPLIERS` in `packages/core/src/risk/scoring.ts`
 
 | Risk Level | Multiplier |
 |---|---|
-| INFO | 0 |
-| LOW | 0.1 |
+| SAFE | 0 |
+| LOW | 0.25 |
 | MEDIUM | 0.5 |
+| HIGH | 0.75 |
+| CRITICAL | 1.0 |
+
+## Simulation Confidence Multipliers
+
+Simulation-derived signals (`SIMULATION_FAILURE`, `SIMULATION_UNAVAILABLE`, `LARGE_TRANSFER`) are further scaled by confidence:
+
+| Confidence | Multiplier |
+|---|---|
 | HIGH | 1.0 |
-| CRITICAL | 2.0 |
+| MEDIUM | 0.7 |
+| LOW | 0.4 |
 
-## Recommendation Thresholds
+## Score Thresholds
 
-- **REJECT**: Score >= 50
-- **CAUTION**: Score >= 25
-- **APPROVE**: Score < 25
+| Score Range | Risk Level | Recommendation |
+|---|---|---|
+| >= 80 | CRITICAL | REJECT |
+| >= 60 | HIGH | REJECT |
+| >= 35 | MEDIUM | CAUTION |
+| >= 25 | LOW | CAUTION |
+| >= 15 | LOW | APPROVE |
+| < 15 | SAFE | APPROVE |
 
-## Known Limitations (v1.0.0)
+## Known Limitations (v1.1.0)
 
-- Benchmark corpus is currently synthetic. We need real-world labeled drainer payloads to tune precision/recall.
-- Writable pattern detector (which emits `AUTHORITY_CHANGE`) is highly sensitive and may false-positive on complex DeFi aggregators.
+- Benchmark corpus is partially synthetic. Real-world labeled drainer payloads are being sourced (Blowfish > on-chain collection > community reports).
+- Writable pattern detector fires on 3+ third-party writable accounts. False positives on DEX aggregators are being addressed by narrowing to intent-correlated patterns.
+- Simulation confidence downgrades are conservative. Versioned transactions always use `replaceRecentBlockhash` which caps confidence at MEDIUM.

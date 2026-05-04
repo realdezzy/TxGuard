@@ -131,7 +131,7 @@ describe('simulateTransaction', () => {
 
 describe('simulationToSignal', () => {
   it('returns SIMULATION_FAILURE for failed simulation', () => {
-    const signal = simulationToSignal({ success: false, error: 'err', logs: [], balanceChanges: [], unitsConsumed: 0 });
+    const signal = simulationToSignal({ success: false, error: 'err', logs: [], balanceChanges: [], unitsConsumed: 0, confidence: 'LOW' });
     expect(signal?.type).toBe(SignalType.SIMULATION_FAILURE);
     expect(signal?.level).toBe(RiskLevel.HIGH);
   });
@@ -141,6 +141,7 @@ describe('simulationToSignal', () => {
       success: true,
       logs: [],
       unitsConsumed: 0,
+      confidence: 'HIGH',
       balanceChanges: [{ account: 'abc', before: 100, after: 85, delta: -15 }],
     });
     expect(signal?.type).toBe(SignalType.LARGE_TRANSFER);
@@ -151,6 +152,7 @@ describe('simulationToSignal', () => {
       success: true,
       logs: [],
       unitsConsumed: 0,
+      confidence: 'HIGH',
       balanceChanges: [{ account: 'abc', before: 1, after: 0.999, delta: -0.001 }],
     });
     expect(signal).toBeNull();
@@ -158,7 +160,7 @@ describe('simulationToSignal', () => {
 
   it('respects a custom threshold', () => {
     const signal = simulationToSignal(
-      { success: true, logs: [], unitsConsumed: 0, balanceChanges: [{ account: 'abc', before: 5, after: 2, delta: -3 }] },
+      { success: true, logs: [], unitsConsumed: 0, confidence: 'HIGH', balanceChanges: [{ account: 'abc', before: 5, after: 2, delta: -3 }] },
       2,
     );
     expect(signal?.type).toBe(SignalType.LARGE_TRANSFER);

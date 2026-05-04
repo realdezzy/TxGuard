@@ -94,6 +94,7 @@ export async function simulateTransaction(
         logs: [],
         balanceChanges: [],
         unitsConsumed: 0,
+        confidence: 'LOW',
       };
     }
   }
@@ -102,19 +103,29 @@ export async function simulateTransaction(
   const preBalances = await fetchPreBalances(connection, writableAddresses);
 
   let simulationResponse: Awaited<ReturnType<Connection['simulateTransaction']>>;
+  let currentSlot: number | null = null;
 
   try {
-    simulationResponse = await withTimeout(
-      isVersioned
-        ? connection.simulateTransaction(transaction as VersionedTransaction, {
-            sigVerify: false,
-            replaceRecentBlockhash: true,
-            accounts: writableAddresses.length > 0
-              ? { encoding: 'base64', addresses: writableAddresses }
-              : undefined,
-          })
-        : connection.simulateTransaction(transaction as Transaction),
-    );
+    const [simRes, slotRes] = await Promise.all([
+      withTimeout(
+        isVersioned
+          ? connection.simulateTransaction(transaction as VersionedTransaction, {
+              sigVerify: false,
+              replaceRecentBlockhash: true,
+              accounts: writableAddresses.length > 0
+                ? { encoding: 'base64', addresses: writableAddresses }
+                : undefined,
+            })
+          : connection.simulateTransaction(transaction as Transaction),
+      ),
+      withTimeout(
+        typeof connection.getSlot === 'function' 
+          ? connection.getSlot() 
+          : Promise.reject(new Error('getSlot not available'))
+      ).catch(() => null)
+    ]);
+    simulationResponse = simRes;
+    currentSlot = slotRes;
   } catch (err) {
     throw new Error(
       `RPC simulation unavailable: ${err instanceof Error ? err.message : 'Unknown error'}`,
@@ -130,7 +141,10 @@ export async function simulateTransaction(
       logs: result.logs ?? [],
       balanceChanges: [],
       unitsConsumed: result.unitsConsumed ?? 0,
+      confidence: 'LOW',
       slot: simulationResponse.context.slot,
+      simulationSource: 'rpc',
+      stateConsistencyHint: 'recent',
     };
   }
 
@@ -184,13 +198,40 @@ export async function simulateTransaction(
     }
   }
 
+  const hasAccounts = !!accountResults && accountResults.length > 0;
+  const hasBalanceData = balanceChanges.length > 0;
+  const usedBlockhashReplace = isVersioned;
+
+  let confidence: 'LOW' | 'MEDIUM' | 'HIGH';
+  if (hasAccounts && hasBalanceData && !usedBlockhashReplace) {
+    confidence = 'HIGH';
+  } else if (hasAccounts || hasBalanceData) {
+    confidence = 'MEDIUM';
+  } else {
+    confidence = 'LOW';
+  }
+
+  let stateConsistencyHint: 'recent' | 'slightly_stale' | 'stale' = 'recent';
+  const simSlot = simulationResponse.context.slot;
+  if (currentSlot && simSlot) {
+    const diff = currentSlot - simSlot;
+    if (diff > 50) {
+      stateConsistencyHint = 'stale';
+    } else if (diff > 10) {
+      stateConsistencyHint = 'slightly_stale';
+    }
+  }
+
   return {
     success: true,
     logs: result.logs ?? [],
     balanceChanges,
     unitsConsumed: result.unitsConsumed ?? 0,
+    confidence,
     slot: simulationResponse.context.slot,
     replaceRecentBlockhash: isVersioned ? true : undefined,
+    simulationSource: 'rpc',
+    stateConsistencyHint,
   };
 }
 
@@ -204,7 +245,7 @@ export function simulationToSignal(
       level: RiskLevel.HIGH,
       title: 'Simulation Failed',
       message: `Transaction simulation failed: ${sim.error ?? 'Unknown error'}. This transaction will likely fail on-chain.`,
-      metadata: { error: sim.error, logs: sim.logs.slice(0, 5) },
+      metadata: { error: sim.error, logs: sim.logs.slice(0, 5), simulationConfidence: sim.confidence },
     };
   }
 
@@ -218,7 +259,7 @@ export function simulationToSignal(
       level: RiskLevel.MEDIUM,
       title: 'Large SOL Transfer',
       message: `This transaction moves ${largeSolTransfers.map((t) => `${Math.abs(t.delta).toFixed(2)} SOL`).join(', ')}.`,
-      metadata: { transfers: largeSolTransfers },
+      metadata: { transfers: largeSolTransfers, simulationConfidence: sim.confidence },
     };
   }
 
@@ -232,7 +273,7 @@ export function simulationToSignal(
       level: RiskLevel.MEDIUM,
       title: 'NFT Transfer Detected',
       message: `This transaction transfers ${nftTransfers.length} NFT(s). Verify the recipient.`,
-      metadata: { nftTransfers },
+      metadata: { nftTransfers, simulationConfidence: sim.confidence },
     };
   }
 
@@ -246,7 +287,7 @@ export function simulationToSignal(
       level: RiskLevel.LOW,
       title: 'Token Account Rent Reclaimed',
       message: `This transaction reclaims rent from ${rentDrains.length} token account(s).`,
-      metadata: { rentDrains },
+      metadata: { rentDrains, simulationConfidence: sim.confidence },
     };
   }
 

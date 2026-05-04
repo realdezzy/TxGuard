@@ -11,7 +11,7 @@ export default defineConfig({
     name: 'TxGuard',
     description: 'AI-Powered Wallet Safety Layer for Solana',
     permissions: ['activeTab', 'storage'],
-    host_permissions: ['<all_urls>'],
+    host_permissions: ['*://localhost/*', '*://127.0.0.1/*', 'https://api.txguard.com/*'],
     content_security_policy: {
       extension_pages: "script-src 'self'; object-src 'self';",
     },

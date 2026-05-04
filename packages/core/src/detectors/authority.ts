@@ -160,17 +160,5 @@ export function detectAuthorityChanges(instructions: ParsedInstruction[]): Autho
     }
   }
 
-  for (const ix of instructions) {
-    if (ix.programName === 'Unknown Program') {
-      signals.push({
-        type: SignalType.UNKNOWN_PROGRAM,
-        level: RiskLevel.MEDIUM,
-        title: 'Unknown Program Interaction',
-        message: `Transaction interacts with unrecognized program ${ix.programId.slice(0, 8)}...${ix.programId.slice(-4)}.`,
-        metadata: { programId: ix.programId },
-      });
-    }
-  }
-
   return { signals };
 }

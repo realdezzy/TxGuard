@@ -14,6 +14,13 @@ const SignalType = {
   WALLET_SPOOFING: 'WALLET_SPOOFING',
 } as const;
 
+type SignalCategory = 'dom' | 'provider' | 'origin';
+
+interface CategorizedSignal {
+  category: SignalCategory;
+  signal: RiskSignal;
+}
+
 interface BrowserThreatReport {
   url: string;
   title: string;
@@ -39,6 +46,9 @@ const SENSITIVE_TEXT = [
   'private key',
   'mnemonic',
 ];
+
+const MAX_TX_PAYLOAD_BYTES = 1_048_576;
+const EVENT_ID_PATTERN = /^[a-zA-Z0-9\-]+$/;
 
 function escapeHtml(value: string): string {
   return value
@@ -78,6 +88,45 @@ function hasSensitiveText(element: Element): boolean {
 
 function isElementInside(parent: Element, possibleChild: Element): boolean {
   return parent === possibleChild || parent.contains(possibleChild);
+}
+
+// --- Signal aggregation ---
+// Single heuristic caps at MEDIUM. CRITICAL only from multi-category or seed phrase.
+function aggregateSignals(categorized: CategorizedSignal[], seedPhraseSignal: RiskSignal | null): RiskSignal[] {
+  const result: RiskSignal[] = [];
+
+  // Seed phrase is unconditionally CRITICAL
+  if (seedPhraseSignal) {
+    result.push(seedPhraseSignal);
+  }
+
+  if (categorized.length === 0) return result;
+
+  const categories = new Set(categorized.map((c) => c.category));
+
+  // Determine escalation based on category combination
+  let escalationLevel: typeof RiskLevel[keyof typeof RiskLevel] = RiskLevel.MEDIUM;
+  if (categories.has('provider') && (categories.has('dom') || categories.has('origin'))) {
+    escalationLevel = RiskLevel.CRITICAL;
+  } else if (categories.has('dom') && categories.has('origin')) {
+    escalationLevel = RiskLevel.HIGH;
+  } else if (categories.has('provider')) {
+    escalationLevel = RiskLevel.HIGH;
+  }
+
+  const shouldEscalate = categories.size >= 2;
+
+  for (const { signal } of categorized) {
+    const cappedLevel = shouldEscalate ? escalationLevel : capLevel(signal.level);
+    result.push({ ...signal, level: cappedLevel });
+  }
+
+  return result;
+}
+
+function capLevel(level: string): typeof RiskLevel[keyof typeof RiskLevel] {
+  if (level === RiskLevel.CRITICAL || level === RiskLevel.HIGH) return RiskLevel.MEDIUM;
+  return level as typeof RiskLevel[keyof typeof RiskLevel];
 }
 
 function buildBrowserAnalysis(report: BrowserThreatReport): TransactionAnalysis {
@@ -129,10 +178,75 @@ export default defineContentScript({
       browserThreats.set(key, signalWithScope);
     };
 
-    let lastReportTimestamp = 0;
-    const REPORT_THROTTLE_MS = 5000;
+    let toastContainer: HTMLElement | null = null;
 
-    let trustedOrigins: string[] = [];
+    const showThreatToast = (analysis: TransactionAnalysis) => {
+      if (toastContainer) return; // Only one toast at a time
+      if (analysis.riskLevel === RiskLevel.SAFE) return;
+
+      toastContainer = document.createElement('div');
+      toastContainer.id = 'txguard-threat-toast';
+      const shadow = toastContainer.attachShadow({ mode: 'open' });
+
+      const toast = document.createElement('div');
+      const riskColor = analysis.riskLevel === RiskLevel.CRITICAL ? '#ef4444' : 
+                        analysis.riskLevel === RiskLevel.HIGH ? '#f97316' : '#eab308';
+      
+      toast.style.cssText = `
+        position: fixed; top: 24px; right: 24px; width: 360px;
+        background: rgba(10, 10, 10, 0.8); backdrop-filter: blur(12px);
+        border: 1px solid ${riskColor}40; border-radius: 16px;
+        padding: 20px; color: white; font-family: system-ui, -apple-system, sans-serif;
+        box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.5);
+        z-index: 2147483647; animation: txguard-slide-in 0.4s cubic-bezier(0.16, 1, 0.3, 1);
+        display: flex; flex-direction: column; gap: 12px;
+      `;
+
+      const styleTag = document.createElement('style');
+      styleTag.textContent = `
+        @keyframes txguard-slide-in {
+          from { transform: translateX(120%); opacity: 0; }
+          to { transform: translateX(0); opacity: 1; }
+        }
+        @keyframes txguard-fade-out {
+          from { opacity: 1; transform: scale(1); }
+          to { opacity: 0; transform: scale(0.95); }
+        }
+      `;
+      shadow.appendChild(styleTag);
+
+      toast.innerHTML = `
+        <div style="display: flex; align-items: center; gap: 12px;">
+          <div style="width: 10px; height: 10px; border-radius: 50%; background: ${riskColor}; box-shadow: 0 0 10px ${riskColor};"></div>
+          <span style="font-weight: 800; font-size: 14px; text-transform: uppercase; letter-spacing: 0.05em; color: ${riskColor};">
+            ${analysis.riskLevel} Risk Detected
+          </span>
+          <button id="close-toast" style="margin-left: auto; background: none; border: none; color: rgba(255,255,255,0.4); cursor: pointer; padding: 4px;">✕</button>
+        </div>
+        <p style="margin: 0; font-size: 14px; line-height: 1.5; color: rgba(255,255,255,0.8);">
+          ${escapeHtml(analysis.explanation.split('\n')[0])}
+        </p>
+        <div style="font-size: 11px; color: rgba(255,255,255,0.4); display: flex; justify-content: space-between; align-items: center;">
+          <span>TxGuard Browser Security</span>
+          <span style="background: rgba(255,255,255,0.05); padding: 2px 6px; border-radius: 4px;">Score: ${analysis.riskScore}</span>
+        </div>
+      `;
+
+      shadow.appendChild(toast);
+      document.body.appendChild(toastContainer);
+
+      const dismiss = () => {
+        if (!toastContainer) return;
+        toast.style.animation = 'txguard-fade-out 0.3s forwards';
+        setTimeout(() => {
+          toastContainer?.remove();
+          toastContainer = null;
+        }, 300);
+      };
+
+      shadow.getElementById('close-toast')?.addEventListener('click', dismiss);
+      setTimeout(dismiss, 8000);
+    };
 
     const reportThreats = () => {
       if (browserThreats.size === 0) return;
@@ -146,29 +260,62 @@ export default defineContentScript({
         signals: [...browserThreats.values()],
         timestamp: now,
       };
+
+      const analysis = buildBrowserAnalysis(report);
+      if (analysis.riskLevel !== RiskLevel.SAFE && analysis.riskLevel !== RiskLevel.LOW) {
+        showThreatToast(analysis);
+      }
+
       browser.runtime.sendMessage({ type: 'BROWSER_THREAT', report }).catch(() => undefined);
     };
 
     const isOriginTrusted = () => trustedOrigins.some(o => location.origin === o);
 
-    const detectFramingRisk = () => {
-      if (window.top === window.self) return;
-      if (isOriginTrusted()) return;
-      rememberThreat({
-        type: SignalType.CLICKJACKING,
-        level: RiskLevel.HIGH,
-        title: 'Page Is Running Inside a Frame',
-        message:
-          'This page is embedded inside another page. Embedded wallet or transaction prompts can be used in clickjacking attacks.',
-        metadata: { url: location.href, referrer: document.referrer },
-      }, 'frame');
-    };
+    // --- Individual detectors return categorized signals ---
 
-    const detectOverlayRisk = () => {
-      if (isOriginTrusted()) return;
+    function detectSeedPhraseInput(): RiskSignal | null {
+      const seedPhraseTerms = ['seed phrase', 'recovery phrase', 'secret recovery', 'private key', 'mnemonic'];
+      const inputsAndLabels = [...document.querySelectorAll('input, textarea, [contenteditable], label')];
+
+      const asksForSeedPhrase = inputsAndLabels.some(el => {
+        const text = (el.textContent || (el as HTMLInputElement).value || '').toLowerCase();
+        return seedPhraseTerms.some(term => text.includes(term));
+      });
+
+      if (asksForSeedPhrase) {
+        return {
+          type: SignalType.WALLET_SPOOFING,
+          level: RiskLevel.CRITICAL,
+          title: 'Critical: Seed Phrase Requested',
+          message: 'This page is asking for your seed phrase or private key. Never enter this information on a website. It is almost certainly a scam.',
+          metadata: { url: location.href },
+        };
+      }
+      return null;
+    }
+
+    function detectFramingRisk(): CategorizedSignal | null {
+      if (window.top === window.self) return null;
+      if (isOriginTrusted()) return null;
+      return {
+        category: 'origin',
+        signal: {
+          type: SignalType.CLICKJACKING,
+          level: RiskLevel.HIGH,
+          title: 'Page Is Running Inside a Frame',
+          message:
+            'This page is embedded inside another page. Embedded wallet or transaction prompts can be used in clickjacking attacks.',
+          metadata: { url: location.href, referrer: document.referrer },
+        },
+      };
+    }
+
+    function detectOverlayRisk(): CategorizedSignal[] {
+      if (isOriginTrusted()) return [];
       const viewportArea = window.innerWidth * window.innerHeight;
-      if (viewportArea <= 0) return;
+      if (viewportArea <= 0) return [];
 
+      const results: CategorizedSignal[] = [];
       const candidates = [...document.querySelectorAll('body *')].filter((element) => {
         if (!isVisible(element)) return false;
         const style = window.getComputedStyle(element as HTMLElement);
@@ -185,57 +332,48 @@ export default defineContentScript({
 
       for (const element of candidates.slice(0, 3)) {
         const rect = element.getBoundingClientRect();
-        rememberThreat({
-          type: SignalType.CLICKJACKING,
-          level: RiskLevel.HIGH,
-          title: 'Suspicious Page Overlay',
-          message:
-            'A large high-priority or transparent overlay is intercepting pointer events. This pattern is commonly used to redirect clicks.',
-          metadata: {
-            tagName: element.tagName,
-            className: (element as HTMLElement).className?.toString().slice(0, 120),
-            width: Math.round(rect.width),
-            height: Math.round(rect.height),
+        results.push({
+          category: 'dom',
+          signal: {
+            type: SignalType.CLICKJACKING,
+            level: RiskLevel.HIGH,
+            title: 'Suspicious Page Overlay',
+            message:
+              'A large high-priority or transparent overlay is intercepting pointer events. This pattern is commonly used to redirect clicks.',
+            metadata: {
+              tagName: element.tagName,
+              className: (element as HTMLElement).className?.toString().slice(0, 120),
+              width: Math.round(rect.width),
+              height: Math.round(rect.height),
+            },
           },
         });
       }
-    };
 
-    const detectWalletSpoofingRisk = () => {
-      const seedPhraseTerms = ['seed phrase', 'recovery phrase', 'secret recovery', 'private key', 'mnemonic'];
-      const inputsAndLabels = [...document.querySelectorAll('input, textarea, [contenteditable], label')];
-      
-      const asksForSeedPhrase = inputsAndLabels.some(el => {
-        const text = (el.textContent || (el as HTMLInputElement).value || '').toLowerCase();
-        return seedPhraseTerms.some(term => text.includes(term));
-      });
+      return results;
+    }
 
-      if (asksForSeedPhrase) {
-        rememberThreat({
-          type: SignalType.WALLET_SPOOFING,
-          level: RiskLevel.CRITICAL,
-          title: 'Critical: Seed Phrase Requested',
-          message: 'This page is asking for your seed phrase or private key. Never enter this information on a website. It is almost certainly a scam.',
-          metadata: { url: location.href },
-        }, 'page');
-        return;
-      }
+    function detectWalletSpoofingRisk(): CategorizedSignal[] {
+      const results: CategorizedSignal[] = [];
 
       const walletLikeControls = [...document.querySelectorAll('button, a, [role="button"], input[type="button"], input[type="submit"]')]
         .filter((element) => isVisible(element) && hasSensitiveText(element));
 
       if (walletLikeControls.length >= 3 && !(window as { solana?: unknown }).solana) {
-        rememberThreat({
-          type: SignalType.WALLET_SPOOFING,
-          level: RiskLevel.MEDIUM,
-          title: 'Wallet UI Spoofing Risk',
-          message:
-            'This page shows multiple wallet-like controls but no Solana provider is available in the page context. Verify the site before interacting.',
-          metadata: {
-            url: location.href,
-            controls: walletLikeControls.slice(0, 5).map((element) => escapeHtml((element.textContent ?? '').trim().slice(0, 80))),
+        results.push({
+          category: 'dom',
+          signal: {
+            type: SignalType.WALLET_SPOOFING,
+            level: RiskLevel.MEDIUM,
+            title: 'Wallet UI Spoofing Risk',
+            message:
+              'This page shows multiple wallet-like controls but no Solana provider is available in the page context. Verify the site before interacting.',
+            metadata: {
+              url: location.href,
+              controls: walletLikeControls.slice(0, 5).map((element) => escapeHtml((element.textContent ?? '').trim().slice(0, 80))),
+            },
           },
-        }, 'page');
+        });
       }
 
       // Provider mismatch detection
@@ -245,13 +383,16 @@ export default defineContentScript({
         const solanaKey = solana.publicKey?.toBase58?.() ?? null;
         const phantomKey = phantomSolana.publicKey?.toBase58?.() ?? null;
         if (solanaKey && phantomKey && solanaKey !== phantomKey) {
-          rememberThreat({
-            type: SignalType.WALLET_SPOOFING,
-            level: RiskLevel.HIGH,
-            title: 'Wallet Provider Mismatch',
-            message: 'window.solana and window.phantom.solana expose different public keys. A malicious script may have injected a fake provider.',
-            metadata: { url: location.href },
-          }, 'page');
+          results.push({
+            category: 'provider',
+            signal: {
+              type: SignalType.WALLET_SPOOFING,
+              level: RiskLevel.HIGH,
+              title: 'Wallet Provider Mismatch',
+              message: 'window.solana and window.phantom.solana expose different public keys. A malicious script may have injected a fake provider.',
+              metadata: { url: location.href },
+            },
+          });
         }
       }
 
@@ -262,16 +403,38 @@ export default defineContentScript({
         const downloadTerms = ['download phantom', 'install solflare', 'get backpack', 'download wallet'];
         const pageText = (document.body.textContent ?? '').toLowerCase();
         if (downloadTerms.some(term => pageText.includes(term))) {
-          rememberThreat({
-            type: SignalType.WALLET_SPOOFING,
-            level: RiskLevel.MEDIUM,
-            title: 'Suspicious Wallet Download Prompt',
-            message: 'This page prompts you to download a wallet extension but is not an official wallet domain. Verify the source before downloading.',
-            metadata: { url: location.href, domain: location.hostname },
-          }, 'page');
+          results.push({
+            category: 'origin',
+            signal: {
+              type: SignalType.WALLET_SPOOFING,
+              level: RiskLevel.MEDIUM,
+              title: 'Suspicious Wallet Download Prompt',
+              message: 'This page prompts you to download a wallet extension but is not an official wallet domain. Verify the source before downloading.',
+              metadata: { url: location.href, domain: location.hostname },
+            },
+          });
         }
       }
-    };
+
+      return results;
+    }
+
+    function runAllDetectors() {
+      const seedSignal = detectSeedPhraseInput();
+      const categorized: CategorizedSignal[] = [];
+
+      const framing = detectFramingRisk();
+      if (framing) categorized.push(framing);
+
+      categorized.push(...detectOverlayRisk());
+      categorized.push(...detectWalletSpoofingRisk());
+
+      const aggregated = aggregateSignals(categorized, seedSignal);
+
+      for (const signal of aggregated) {
+        rememberThreat(signal, signal.metadata?.scope as 'page' | 'frame' | 'click' ?? 'page');
+      }
+    }
 
     const detectClickTargetMismatch = (event: MouseEvent) => {
       const target = event.target;
@@ -303,11 +466,42 @@ export default defineContentScript({
       trustedOrigins = settings.trustedOrigins ?? [];
     }).catch(() => undefined);
 
-    detectFramingRisk();
-    detectOverlayRisk();
-    detectWalletSpoofingRisk();
+    // Initial scan
+    runAllDetectors();
     setTimeout(reportThreats, 1000);
     window.addEventListener('click', detectClickTargetMismatch, true);
+
+    // MutationObserver for lazy-loaded threats
+    let mutationScanCount = 0;
+    const MAX_MUTATION_SCANS = 10;
+    let mutationDebounce: ReturnType<typeof setTimeout> | null = null;
+
+    const observer = new MutationObserver(() => {
+      if (mutationScanCount >= MAX_MUTATION_SCANS) return;
+      if (mutationDebounce) clearTimeout(mutationDebounce);
+      mutationDebounce = setTimeout(() => {
+        mutationScanCount++;
+        const seedSignal = detectSeedPhraseInput();
+        if (seedSignal) {
+          rememberThreat(seedSignal, 'page');
+          reportThreats();
+        }
+        const spoofing = detectWalletSpoofingRisk();
+        if (spoofing.length > 0) {
+          for (const s of spoofing) {
+            rememberThreat(s.signal, 'page');
+          }
+          reportThreats();
+        }
+      }, 500);
+    });
+
+    observer.observe(document.body, {
+      childList: true,
+      subtree: true,
+      attributes: false,
+      characterData: false,
+    });
 
     window.addEventListener('message', (event) => {
       if (event.source !== window) return;
@@ -315,6 +509,10 @@ export default defineContentScript({
       const data = event.data;
       if (!data || typeof data !== 'object' || data.type !== 'TXGUARD_ANALYZE_TX') return;
       if (typeof data.transaction !== 'string' || typeof data.eventId !== 'string') return;
+
+      // Validate payload constraints
+      if (data.transaction.length > MAX_TX_PAYLOAD_BYTES) return;
+      if (!EVENT_ID_PATTERN.test(data.eventId)) return;
 
       browser.runtime.sendMessage({
         type: 'ANALYZE_TRANSACTION',
@@ -344,66 +542,96 @@ export default defineContentScript({
       container.id = 'txguard-guardian-overlay';
       const shadow = container.attachShadow({ mode: 'open' });
 
+      const riskColor = analysis.riskLevel === 'CRITICAL' ? '#ef4444' : 
+                        analysis.riskLevel === 'HIGH' ? '#f97316' : 
+                        analysis.riskLevel === 'MEDIUM' ? '#eab308' : '#22c55e';
+
       const overlay = document.createElement('div');
       overlay.style.cssText = `
         position: fixed; top: 0; left: 0; width: 100vw; height: 100vh;
-        background: rgba(0,0,0,0.85); backdrop-filter: blur(8px);
+        background: rgba(0,0,0,0.85); backdrop-filter: blur(12px);
         display: flex; align-items: center; justify-content: center;
-        z-index: 2147483647; font-family: sans-serif; color: white;
+        z-index: 2147483647; font-family: system-ui, -apple-system, sans-serif; color: white;
       `;
+
+      const glow = document.createElement('div');
+      glow.style.cssText = `
+        position: absolute; width: 400px; height: 400px;
+        background: ${riskColor}; filter: blur(150px);
+        opacity: 0.15; border-radius: 50%; pointer-events: none;
+        animation: txguard-pulse 4s infinite alternate;
+      `;
+
+      const styleTag = document.createElement('style');
+      styleTag.textContent = `
+        @keyframes txguard-pulse {
+          from { transform: scale(1); opacity: 0.1; }
+          to { transform: scale(1.2); opacity: 0.2; }
+        }
+        @keyframes txguard-pop {
+          from { transform: scale(0.95); opacity: 0; }
+          to { transform: scale(1); opacity: 1; }
+        }
+        button:hover { filter: brightness(1.1); transform: translateY(-1px); }
+        button:active { transform: translateY(0); }
+      `;
+      shadow.appendChild(styleTag);
 
       const card = document.createElement('div');
       card.style.cssText = `
-        width: 480px; background: #0a0a0a; border: 1px solid rgba(255,255,255,0.1);
-        border-radius: 24px; padding: 32px; box-shadow: 0 25px 50px -12px rgba(0,0,0,0.5);
+        width: 520px; background: rgba(15, 15, 15, 0.9); 
+        border: 1px solid rgba(255,255,255,0.1);
+        border-radius: 28px; padding: 40px; 
+        box-shadow: 0 25px 50px -12px rgba(0,0,0,0.8);
+        position: relative; overflow: hidden;
+        animation: txguard-pop 0.4s cubic-bezier(0.16, 1, 0.3, 1);
       `;
 
-      const riskColor = analysis.riskLevel === 'CRITICAL' ? '#ef4444' : '#f97316';
-      
       const explanation = escapeHtml(analysis.explanation);
       const riskLevel = escapeHtml(analysis.riskLevel);
       const riskScore = escapeHtml(String(analysis.riskScore));
 
       card.innerHTML = `
-        <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 24px;">
+        <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 32px;">
           <div>
-            <h2 style="margin: 0; font-size: 24px; font-weight: 800;">TxGuard Warning</h2>
-            <p style="margin: 4px 0 0; color: rgba(255,255,255,0.5); font-size: 14px;">Suspicious transaction detected</p>
+            <h2 style="margin: 0; font-size: 28px; font-weight: 800; letter-spacing: -0.02em;">Security Alert</h2>
+            <p style="margin: 4px 0 0; color: rgba(255,255,255,0.5); font-size: 15px;">Transaction blocked for your protection</p>
           </div>
-          <div style="background: ${riskColor}20; color: ${riskColor}; padding: 6px 12px; border-radius: 8px; font-weight: 800; font-size: 12px; border: 1px solid ${riskColor}30;">
-            ${riskLevel} (${riskScore})
+          <div style="background: ${riskColor}20; color: ${riskColor}; padding: 8px 16px; border-radius: 12px; font-weight: 900; font-size: 13px; border: 1px solid ${riskColor}40; text-transform: uppercase; letter-spacing: 0.05em;">
+            ${riskLevel}
           </div>
         </div>
 
-        <div style="background: rgba(255,255,255,0.03); border: 1px solid rgba(255,255,255,0.05); border-radius: 16px; padding: 20px; margin-bottom: 24px;">
-           <h3 style="margin: 0 0 8px; font-size: 14px; color: ${riskColor}; text-transform: uppercase; letter-spacing: 0.05em;">AI Risk Analysis</h3>
-           <p style="margin: 0; font-size: 15px; line-height: 1.6; color: rgba(255,255,255,0.9); font-style: italic;">
-             "${explanation}"
+        <div style="background: rgba(255,255,255,0.03); border: 1px solid rgba(255,255,255,0.08); border-radius: 20px; padding: 24px; margin-bottom: 32px;">
+           <h3 style="margin: 0 0 12px; font-size: 12px; color: ${riskColor}; text-transform: uppercase; letter-spacing: 0.1em; font-weight: 800;">Risk Analysis</h3>
+           <p style="margin: 0; font-size: 16px; line-height: 1.6; color: rgba(255,255,255,0.9);">
+             ${explanation}
            </p>
         </div>
 
-        <div style="display: grid; grid-template-cols: 1fr 1fr; gap: 16px; margin-bottom: 32px;">
-           <div style="background: rgba(255,255,255,0.02); padding: 12px; border-radius: 12px; border: 1px solid rgba(255,255,255,0.05);">
-             <div style="font-size: 10px; color: rgba(255,255,255,0.4); text-transform: uppercase;">Risk Score</div>
-             <div style="font-size: 18px; font-weight: 700; color: #ef4444;">${riskScore}/100</div>
+        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 20px; margin-bottom: 40px;">
+           <div style="background: rgba(255,255,255,0.02); padding: 16px; border-radius: 16px; border: 1px solid rgba(255,255,255,0.05);">
+             <div style="font-size: 10px; color: rgba(255,255,255,0.4); text-transform: uppercase; font-weight: 800; letter-spacing: 0.05em; margin-bottom: 4px;">Risk Score</div>
+             <div style="font-size: 24px; font-weight: 800; color: ${riskColor};">${riskScore}<span style="font-size: 14px; color: rgba(255,255,255,0.3); margin-left: 2px;">/100</span></div>
            </div>
-           <div style="background: rgba(255,255,255,0.02); padding: 12px; border-radius: 12px; border: 1px solid rgba(255,255,255,0.05);">
-             <div style="font-size: 10px; color: rgba(255,255,255,0.4); text-transform: uppercase;">Signals</div>
-             <div style="font-size: 18px; font-weight: 700; color: #f97316;">${escapeHtml(String(analysis.signals.length))} detected</div>
+           <div style="background: rgba(255,255,255,0.02); padding: 16px; border-radius: 16px; border: 1px solid rgba(255,255,255,0.05);">
+             <div style="font-size: 10px; color: rgba(255,255,255,0.4); text-transform: uppercase; font-weight: 800; letter-spacing: 0.05em; margin-bottom: 4px;">Signals</div>
+             <div style="font-size: 24px; font-weight: 800; color: #fff;">${escapeHtml(String(analysis.signals.length))} <span style="font-size: 14px; color: rgba(255,255,255,0.3);">detected</span></div>
            </div>
         </div>
 
-        <div style="display: flex; gap: 12px;">
-          <button id="txguard-reject" style="flex: 1; height: 52px; border-radius: 12px; border: 1px solid rgba(255,255,255,0.1); background: transparent; color: white; font-weight: 700; cursor: pointer; transition: all 0.2s;">
+        <div style="display: flex; flex-direction: column; gap: 12px;">
+          <button id="txguard-reject" style="width: 100%; height: 56px; border-radius: 16px; border: none; background: white; color: black; font-size: 16px; font-weight: 800; cursor: pointer; transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);">
             Reject Transaction
           </button>
-          <button id="txguard-approve" style="flex: 1; height: 52px; border-radius: 12px; border: none; background: #eab308; color: #000; font-weight: 700; cursor: pointer; transition: all 0.2s;">
-            Continue Anyway
+          <button id="txguard-approve" style="width: 100%; height: 48px; border-radius: 16px; border: 1px solid rgba(255,255,255,0.1); background: transparent; color: rgba(255,255,255,0.4); font-size: 14px; font-weight: 600; cursor: pointer; transition: all 0.2s;">
+            I trust this site, continue anyway
           </button>
         </div>
       `;
 
       shadow.appendChild(overlay);
+      overlay.appendChild(glow);
       overlay.appendChild(card);
       document.body.appendChild(container);
 
@@ -413,7 +641,7 @@ export default defineContentScript({
       });
 
       shadow.getElementById('txguard-approve')?.addEventListener('click', () => {
-        if (confirm('Are you absolutely sure? This action is risky.')) {
+        if (confirm('CRITICAL WARNING: This transaction has been flagged as high risk. Continuing may result in a total loss of funds. Are you absolutely sure?')) {
           container.remove();
           onDecision(true);
         }

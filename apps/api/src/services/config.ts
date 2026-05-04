@@ -8,7 +8,8 @@ const configSchema = z.object({
   redisUrl: z.string().url().default('redis://localhost:6379'),
   requestBodyLimit: z.string().min(1).default('1mb'),
   rateLimitWindowMs: z.coerce.number().int().positive().default(60_000),
-  rateLimitMaxRequests: z.coerce.number().int().positive().default(60),
+  rateLimitPerIpMaxRequests: z.coerce.number().int().positive().default(60),
+  rateLimitPerKeyMaxRequests: z.coerce.number().int().positive().default(600),
   requestTimeoutMs: z.coerce.number().int().positive().default(30_000),
   apiKey: z.string().min(1).optional(),
 });
@@ -26,7 +27,8 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): ApiConfig {
     redisUrl: env['REDIS_URL'],
     requestBodyLimit: env['API_REQUEST_BODY_LIMIT'],
     rateLimitWindowMs: env['API_RATE_LIMIT_WINDOW_MS'],
-    rateLimitMaxRequests: env['API_RATE_LIMIT_MAX_REQUESTS'],
+    rateLimitPerIpMaxRequests: env['API_RATE_LIMIT_PER_IP_MAX_REQUESTS'],
+    rateLimitPerKeyMaxRequests: env['API_RATE_LIMIT_PER_KEY_MAX_REQUESTS'],
     requestTimeoutMs: env['API_REQUEST_TIMEOUT_MS'],
     apiKey: env['API_KEY'],
   });

@@ -23,7 +23,8 @@ app.use(
   apiKeyAuth(config),
   rateLimit({
     windowMs: config.rateLimitWindowMs,
-    maxRequests: config.rateLimitMaxRequests,
+    perIpMaxRequests: config.rateLimitPerIpMaxRequests,
+    perKeyMaxRequests: config.rateLimitPerKeyMaxRequests,
   }),
   analyzeRouter,
 );
@@ -32,7 +33,8 @@ app.use(
   apiKeyAuth(config),
   rateLimit({
     windowMs: config.rateLimitWindowMs,
-    maxRequests: config.rateLimitMaxRequests,
+    perIpMaxRequests: config.rateLimitPerIpMaxRequests,
+    perKeyMaxRequests: config.rateLimitPerKeyMaxRequests,
   }),
   blinkRouter,
 );

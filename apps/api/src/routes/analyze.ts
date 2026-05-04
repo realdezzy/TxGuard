@@ -10,6 +10,7 @@ export const analyzeRouter: Router = Router();
 
 const analyzeSchema = z.object({
   transaction: z.string().min(1),
+  cluster: z.enum(['mainnet-beta', 'devnet', 'testnet']).optional().default('devnet'),
   addressHistory: z.array(z.string()).optional().default([]),
 });
 
@@ -20,8 +21,8 @@ analyzeRouter.post('/', async (req, res) => {
     return;
   }
 
-  const { transaction, addressHistory } = parsed.data;
-  const txHash = generateTxHash(transaction);
+  const { transaction, cluster, addressHistory } = parsed.data;
+  const txHash = `${cluster}:${generateTxHash(transaction)}`;
 
   try {
     const cached = await getCachedAnalysis(txHash);
@@ -31,9 +32,10 @@ analyzeRouter.post('/', async (req, res) => {
       return;
     }
 
+    const connection = getSolanaConnection(cluster);
     const analysis = await analyzeTransaction(transaction, {
-      rpcUrl: config.solanaRpcUrl,
-      connection: getSolanaConnection(),
+      rpcUrl: connection.rpcEndpoint,
+      connection,
       aiProviders: buildProviderChain(),
       addressHistory,
     });

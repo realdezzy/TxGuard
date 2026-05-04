@@ -1,9 +1,10 @@
 import { Connection } from '@solana/web3.js';
-import type {
-  TransactionAnalysis,
-  GuardianConfig,
-  RiskSignal,
-  SimulationResult,
+import {
+  SignalType,
+  type TransactionAnalysis,
+  type GuardianConfig,
+  type RiskSignal,
+  type SimulationResult,
 } from './types/index.js';
 import { parseTransaction } from './parser/index.js';
 import {
@@ -12,6 +13,8 @@ import {
   detectAuthorityChanges,
   detectComputeBudgetManipulation,
   detectWritablePatterns,
+  detectUnknownPrograms,
+  classifyIntent,
 } from './detectors/index.js';
 import {
   simulateTransaction,
@@ -54,6 +57,9 @@ export function runDetectors(
   const budgetResult = detectComputeBudgetManipulation(instructions, signals);
   if (budgetResult.signal) signals.push(budgetResult.signal);
 
+  const programResult = detectUnknownPrograms(instructions, signals);
+  signals.push(...programResult.signals);
+
   return signals;
 }
 
@@ -84,7 +90,21 @@ export async function analyzeTransaction(
   const signals: RiskSignal[] = [...detectorSignals];
   if (simResult.signal) signals.push(simResult.signal);
 
-  const riskScore = calculateRiskScore(signals);
+  const { primaryIntent, anomalies } = classifyIntent(instructions);
+  
+  if (anomalies && anomalies.length > 0) {
+    for (const anomaly of anomalies) {
+      signals.push({
+        type: SignalType.INTENT_ANOMALY,
+        level: anomaly.severity,
+        title: 'Unexpected Transaction Intent',
+        message: `An unexpected instruction pattern (${anomaly.type}) was found for a ${primaryIntent} transaction.`,
+        metadata: { anomaly, primaryIntent },
+      });
+    }
+  }
+
+  const { riskScore, whyScore, scoreVarianceHint } = calculateRiskScore(signals);
   const riskLevel = scoreToRiskLevel(riskScore);
   const recommendation = scoreToRecommendation(riskScore);
 
@@ -93,8 +113,12 @@ export async function analyzeTransaction(
     signals,
     simulation: simResult.simulation,
     riskScore,
+    whyScore,
+    scoreVarianceHint,
     riskLevel,
     recommendation,
+    intent: primaryIntent,
+    anomalies,
     timestamp: Date.now(),
     scoringVersion: SCORING_VERSION,
   };

@@ -1,4 +1,5 @@
 import type { Connection } from '@solana/web3.js';
+import type { TransactionIntent, IntentAnomaly } from '../detectors/intent.js';
 
 // u64 max value for token amount comparisons. JS cannot represent this exactly as a number.
 export const U64_MAX = 18_446_744_073_709_551_615n;
@@ -29,6 +30,7 @@ export const SignalType = {
   CLICKJACKING: 'CLICKJACKING',
   WALLET_SPOOFING: 'WALLET_SPOOFING',
   COMPUTE_BUDGET_MANIPULATION: 'COMPUTE_BUDGET_MANIPULATION',
+  INTENT_ANOMALY: 'INTENT_ANOMALY',
 } as const;
 
 export type SignalType = (typeof SignalType)[keyof typeof SignalType];
@@ -40,6 +42,18 @@ export interface RiskSignal {
   message: string;
   metadata?: Record<string, unknown>;
 }
+
+export type ProgramTrustLevel = 'VERIFIED' | 'KNOWN' | 'NEW';
+export type ProgramUpgradeable = boolean | 'unknown';
+
+export interface WhyScoreReason {
+  code: string;
+  label: string;
+  points: number;
+  source: 'detector' | 'simulation' | 'browser' | 'scoring';
+}
+
+export type ScoreVarianceHint = 'LOW' | 'MEDIUM' | 'HIGH';
 
 export interface AccountMeta {
   address: string;
@@ -72,9 +86,12 @@ export interface SimulationResult {
   logs: string[];
   balanceChanges: BalanceChange[];
   unitsConsumed: number;
+  confidence: 'LOW' | 'MEDIUM' | 'HIGH';
   slot?: number;
   replaceRecentBlockhash?: boolean;
   cluster?: string;
+  simulationSource?: string;
+  stateConsistencyHint?: 'recent' | 'slightly_stale' | 'stale';
 }
 
 export interface TransactionAnalysis {
@@ -82,8 +99,12 @@ export interface TransactionAnalysis {
   signals: RiskSignal[];
   simulation: SimulationResult | null;
   riskScore: number;
+  whyScore: WhyScoreReason[];
+  scoreVarianceHint: ScoreVarianceHint;
   riskLevel: RiskLevel;
   recommendation: 'APPROVE' | 'CAUTION' | 'REJECT';
+  intent?: TransactionIntent;
+  anomalies?: IntentAnomaly[];
   explanation: string;
   timestamp: number;
   scoringVersion?: string;

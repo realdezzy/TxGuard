@@ -46,6 +46,12 @@ jobs:
     - name: Lint
       run: pnpm run lint
       
+    - name: Security Audit
+      run: pnpm audit --prod
+      
+    - name: Benchmark Detectors
+      run: pnpm --filter @txguard/core benchmark
+      
     - name: Test Core
       run: pnpm --filter @txguard/core test
       

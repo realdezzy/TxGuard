@@ -3,3 +3,10 @@ export { detectDurableNonce, type DurableNonceResult } from './durable-nonce.js'
 export { detectAuthorityChanges, type AuthorityChangeResult } from './authority.js';
 export { detectComputeBudgetManipulation, type ComputeBudgetResult } from './compute-budget.js';
 export { detectWritablePatterns, type WritablePatternResult } from './writable-pattern.js';
+export {
+  detectUnknownPrograms,
+  isTrustedProgram,
+  getTrustedProgramName,
+  type ProgramReputationResult,
+} from './program-reputation.js';
+export { classifyIntent, TransactionIntent } from './intent.js';

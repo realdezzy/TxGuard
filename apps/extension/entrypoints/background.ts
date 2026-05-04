@@ -4,10 +4,14 @@ import type { TransactionAnalysis } from '@txguard/core';
 export default defineBackground(() => {
   console.log('TxGuard background worker started');
 
+  const MAX_TX_PAYLOAD_BYTES = 1_048_576;
+
   async function getApiUrl(): Promise<string> {
     const data = await browser.storage.local.get('settings');
     const settings = (data.settings || {}) as Record<string, any>;
-    return settings.apiUrl || import.meta.env.VITE_API_URL || 'http://localhost:3001';
+    const envUrl = import.meta.env.VITE_API_URL;
+    const resolvedEnvUrl = envUrl && envUrl !== 'undefined' ? envUrl : undefined;
+    return settings.apiUrl || resolvedEnvUrl || 'http://localhost:3001';
   }
 
   async function saveToHistory(item: any) {
@@ -20,8 +24,16 @@ export default defineBackground(() => {
     await browser.storage.local.set({ history: newHistory });
   }
 
-  browser.runtime.onMessage.addListener((message: any, sender: any, sendResponse: (response?: any) => void) => {
-    if (message.type === 'ANALYZE_BLINK') {
+  browser.runtime.onMessage.addListener((message: unknown, sender: any, sendResponse: (response?: any) => void) => {
+    if (!message || typeof message !== 'object') return false;
+    const msg = message as Record<string, unknown>;
+
+    if (msg.type === 'ANALYZE_BLINK') {
+      if (typeof msg.url !== 'string' || !msg.url.startsWith('http')) {
+        sendResponse({ success: false, error: 'Invalid URL' });
+        return true;
+      }
+
       const controller = new AbortController();
       const timeoutId = setTimeout(() => controller.abort(), 10_000);
       
@@ -30,7 +42,7 @@ export default defineBackground(() => {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
-            url: message.url,
+            url: msg.url as string,
             account: '11111111111111111111111111111111' 
           }),
           signal: controller.signal
@@ -38,7 +50,7 @@ export default defineBackground(() => {
         .then(res => res.json())
         .then(async data => {
           clearTimeout(timeoutId);
-          await saveToHistory({ type: 'blink', url: message.url, analysis: data.analysis });
+          await saveToHistory({ type: 'blink', url: msg.url, analysis: data.analysis });
           sendResponse({ success: true, data });
         })
         .catch(err => {
@@ -50,7 +62,12 @@ export default defineBackground(() => {
       return true;
     }
 
-    if (message.type === 'ANALYZE_TRANSACTION') {
+    if (msg.type === 'ANALYZE_TRANSACTION') {
+      if (typeof msg.transaction !== 'string' || msg.transaction.length > MAX_TX_PAYLOAD_BYTES) {
+        sendResponse({ approved: false, error: 'Invalid transaction payload' });
+        return true;
+      }
+      
       const controller = new AbortController();
       const timeoutId = setTimeout(() => controller.abort(), 10_000);
       
@@ -58,7 +75,7 @@ export default defineBackground(() => {
         fetch(`${apiUrl}/api/analyze`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ transaction: message.transaction }),
+          body: JSON.stringify({ transaction: msg.transaction }),
           signal: controller.signal
         })
         .then(res => res.json())
@@ -77,9 +94,9 @@ export default defineBackground(() => {
       return true;
     }
 
-    if (message.type === 'BROWSER_THREAT') {
-      const report = message.report;
-      if (report?.signals?.length > 0) {
+    if (msg.type === 'BROWSER_THREAT') {
+      const report = msg.report as any;
+      if (report && Array.isArray(report.signals) && report.signals.length > 0) {
         const riskScore = Math.min(
           100,
           report.signals.reduce((score: number, signal: { level: string }) => {
@@ -112,9 +129,11 @@ export default defineBackground(() => {
       return true;
     }
 
-    if (message.type === 'GET_HISTORY') {
+    if (msg.type === 'GET_HISTORY') {
       browser.storage.local.get('history').then(data => sendResponse(data.history || []));
       return true;
     }
+
+    return false;
   });
 });
