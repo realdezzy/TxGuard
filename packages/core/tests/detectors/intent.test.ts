@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
-import { classifyIntent, TransactionIntent } from './intent.js';
-import type { ParsedInstruction } from '../types/index.js';
+import { classifyIntent, TransactionIntent } from '../../src/detectors/intent.js';
+import type { ParsedInstruction } from '../../src/types/index.js';
 
 function ix(programId: string, type: string): ParsedInstruction {
   return {

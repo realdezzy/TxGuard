@@ -1,4 +1,4 @@
-import type { SimulationResult, BalanceChange } from '@txguard/core';
+import type { SimulationResult } from '@txguard/core';
 import { formatSol } from '../utils/formatters';
 
 interface BalanceChangesProps {
@@ -6,9 +6,8 @@ interface BalanceChangesProps {
 }
 
 export function BalanceChanges({ simulation }: BalanceChangesProps) {
-  const { balanceChanges, confidence } = simulation;
+  const { balanceChanges, confidence, feePayer } = simulation;
   
-  // Collapse zero-value changes
   const activeChanges = balanceChanges.filter((c) => Math.abs(c.delta) > 0.000001);
 
   if (activeChanges.length === 0) {
@@ -19,22 +18,24 @@ export function BalanceChanges({ simulation }: BalanceChangesProps) {
     );
   }
 
-  // Check for suspicious values across all changes
   const formattedChanges = activeChanges.map(c => ({
     ...c,
-    ...formatSol(c.delta)
+    ...formatSol(c.token ? 0 : c.delta), // formatSol is SOL-specific, skip for SPL
+    formattedAmount: c.token === 'SPL' 
+      ? `${c.delta > 0 ? '+' : ''}${c.delta.toLocaleString(undefined, { maximumFractionDigits: c.decimals ?? 6 })}`
+      : undefined
   }));
   
-  const hasSuspiciousValues = formattedChanges.some(c => c.suspicious);
+  const hasSuspiciousValues = formattedChanges.some(c => !c.token && c.suspicious);
   const displayConfidence = hasSuspiciousValues ? 'LOW' : confidence;
 
-  // Simple heuristic for "Your Wallet": The first signer or the one with the largest negative delta.
-  // For this exercise, we assume the first account in simulation is usually the user or we look for the biggest negative.
-  const userWalletChange = formattedChanges.reduce((prev, current) => {
+  // Use feePayer if available, otherwise fallback to biggest negative (heuristic)
+  const userWalletAccount = feePayer || formattedChanges.reduce((prev, current) => {
     return (current.delta < prev.delta) ? current : prev;
-  }, formattedChanges[0]);
+  }, formattedChanges[0]).account;
 
-  const counterparties = formattedChanges.filter(c => c.account !== userWalletChange.account);
+  const userChanges = formattedChanges.filter(c => c.account === userWalletAccount);
+  const counterpartyChanges = formattedChanges.filter(c => c.account !== userWalletAccount);
 
   return (
     <div className="space-y-4">
@@ -50,7 +51,7 @@ export function BalanceChanges({ simulation }: BalanceChangesProps) {
           displayConfidence === 'MEDIUM' ? 'bg-yellow-500/10 text-yellow-400 border-yellow-500/20' :
           'bg-red-500/10 text-red-400 border-red-500/20'
         }`}>
-          {displayConfidence === 'LOW' ? '⚠️ Low Confidence (possible decoding issue)' : `${displayConfidence} Confidence`}
+          {displayConfidence === 'LOW' ? '⚠️ Low Confidence' : `${displayConfidence} Confidence`}
         </div>
       </div>
 
@@ -59,24 +60,35 @@ export function BalanceChanges({ simulation }: BalanceChangesProps) {
           {/* User Wallet */}
           <div>
             <span className="text-[10px] uppercase tracking-widest font-bold text-white/30 block mb-3">Your Wallet</span>
-            <div className="flex justify-between items-center bg-white/5 p-4 rounded-xl border border-white/10">
-              <span className="font-mono text-sm text-white/60 truncate mr-4">{userWalletChange.account}</span>
-              <span className={`font-bold text-lg ${userWalletChange.delta > 0 ? 'text-green-400' : userWalletChange.delta < 0 ? 'text-red-400' : 'text-white/40'}`}>
-                {userWalletChange.delta > 0 ? '+' : ''}{userWalletChange.formatted} SOL
-              </span>
+            <div className="space-y-2">
+              <div className="bg-white/5 p-4 rounded-xl border border-white/10 mb-2">
+                <span className="font-mono text-[10px] text-white/30 block mb-1">Address</span>
+                <span className="font-mono text-sm text-white/60 truncate block">{userWalletAccount}</span>
+              </div>
+              {userChanges.map((change, i) => (
+                <div key={i} className="flex justify-between items-center px-4 py-2 bg-white/5 rounded-lg">
+                  <span className="text-xs text-white/40">{change.token === 'SPL' ? `Token (${change.mint?.slice(0,4)}...)` : 'SOL'}</span>
+                  <span className={`font-bold ${change.delta > 0 ? 'text-green-400' : change.delta < 0 ? 'text-red-400' : 'text-white/40'}`}>
+                    {change.token === 'SPL' ? change.formattedAmount : `${change.delta > 0 ? '+' : ''}${change.formatted} SOL`}
+                  </span>
+                </div>
+              ))}
             </div>
           </div>
 
           {/* Counterparties */}
-          {counterparties.length > 0 && (
+          {counterpartyChanges.length > 0 && (
             <div>
-              <span className="text-[10px] uppercase tracking-widest font-bold text-white/30 block mb-3">Counterparties</span>
+              <span className="text-[10px] uppercase tracking-widest font-bold text-white/30 block mb-3">Counterparties & Vaults</span>
               <div className="space-y-2">
-                {counterparties.map((change, i) => (
+                {counterpartyChanges.map((change, i) => (
                   <div key={i} className="flex justify-between items-center p-3 rounded-lg border border-white/5 hover:bg-white/5 transition-colors">
-                    <span className="font-mono text-xs text-white/40 truncate mr-4">{change.account}</span>
-                    <span className={`font-bold ${change.delta > 0 ? 'text-green-400' : change.delta < 0 ? 'text-red-400' : 'text-white/40'}`}>
-                      {change.delta > 0 ? '+' : ''}{change.formatted} SOL
+                    <div className="flex flex-col">
+                      <span className="font-mono text-[10px] text-white/20 truncate max-w-[120px]">{change.account}</span>
+                      <span className="text-[10px] text-white/40">{change.token === 'SPL' ? `Token (${change.mint?.slice(0,4)}...)` : 'SOL'}</span>
+                    </div>
+                    <span className={`font-bold text-sm ${change.delta > 0 ? 'text-green-400' : change.delta < 0 ? 'text-red-400' : 'text-white/40'}`}>
+                      {change.token === 'SPL' ? change.formattedAmount : `${change.delta > 0 ? '+' : ''}${change.formatted} SOL`}
                     </span>
                   </div>
                 ))}

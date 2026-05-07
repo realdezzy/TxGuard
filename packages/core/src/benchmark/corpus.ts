@@ -138,6 +138,88 @@ export function buildCorpus(): LabeledTransaction[] {
     description: 'Approve unlimited delegate then close account to drainer -- combined sweep',
   });
 
+  // Malicious: SolPhish ISA (Impersonation)
+  const vanityAddress = 'ComputeBudget111111111111111111111111111112';
+  const txIsa = new Transaction().add(SystemProgram.transfer({
+    fromPubkey: victim,
+    toPubkey: new PublicKey(vanityAddress),
+    lamports: 1_000_000,
+  }));
+  corpus.push({
+    id: 'malicious-solphish-isa',
+    source: 'synthetic',
+    category: 'malicious',
+    intent: 'transfer',
+    rawTransaction: serializeUnsigned(txIsa, victim),
+    expectedSignals: [
+      { type: SignalType.SOLPHISH_PATTERN, minLevel: RiskLevel.HIGH },
+    ],
+    description: 'Transfer to a vanity address mimicking the Compute Budget program',
+  });
+
+  // Malicious: STMT (Multi-token sweep)
+  const txStmt = new Transaction();
+  for (let i = 0; i < 5; i++) {
+    txStmt.add(SystemProgram.transfer({
+      fromPubkey: victim,
+      toPubkey: drainer,
+      lamports: 100_000,
+    }));
+  }
+  corpus.push({
+    id: 'malicious-solphish-stmt',
+    source: 'synthetic',
+    category: 'malicious',
+    intent: 'transfer',
+    rawTransaction: serializeUnsigned(txStmt, victim),
+    expectedSignals: [
+      { type: SignalType.SOLPHISH_PATTERN, minLevel: RiskLevel.HIGH },
+    ],
+    description: 'Multiple transfers in one transaction (drainer sweep pattern)',
+  });
+
+  // Malicious: Authority Takeover
+  const txAuth = new Transaction().add({
+    programId: new PublicKey('TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA'),
+    keys: [
+      { pubkey: tokenAccount, isSigner: false, isWritable: true },
+      { pubkey: victim, isSigner: true, isWritable: false },
+    ],
+    data: Buffer.from([6, 0, ...new PublicKey(drainer).toBuffer()]), // SetAuthority(AccountOwner, drainer)
+  });
+  corpus.push({
+    id: 'malicious-authority-takeover',
+    source: 'synthetic',
+    category: 'malicious',
+    intent: 'unknown',
+    rawTransaction: serializeUnsigned(txAuth, victim),
+    expectedSignals: [
+      { type: SignalType.AUTHORITY_CHANGE, minLevel: RiskLevel.CRITICAL },
+    ],
+    description: 'Changing token account authority to an external address',
+  });
+
+  // Malicious: Writable System Variable Exploit
+  const txWritable = new Transaction().add({
+    programId: unknownProgram,
+    keys: [
+      { pubkey: victim, isSigner: true, isWritable: true },
+      { pubkey: new PublicKey('SysvarC1ock11111111111111111111111111111111'), isSigner: false, isWritable: true },
+    ],
+    data: Buffer.from([1]),
+  });
+  corpus.push({
+    id: 'malicious-writable-exploit',
+    source: 'synthetic',
+    category: 'malicious',
+    intent: 'unknown',
+    rawTransaction: serializeUnsigned(txWritable, victim),
+    expectedSignals: [
+      { type: SignalType.WRITABLE_PATTERN, minLevel: RiskLevel.HIGH },
+    ],
+    description: 'Requesting writable access to a System Variable (Clock)',
+  });
+
   // --- Noise Cases / Near Misses ---
 
   // Swap with extra noise

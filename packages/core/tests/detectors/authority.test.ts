@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
-import { SignalType, RiskLevel, U64_MAX } from '../types/index.js';
-import { detectAuthorityChanges } from './authority.js';
-import type { ParsedInstruction } from '../types/index.js';
+import { SignalType, RiskLevel, U64_MAX } from '../../src/types/index.js';
+import { detectAuthorityChanges } from '../../src/detectors/authority.js';
+import type { ParsedInstruction } from '../../src/types/index.js';
 
 const TOKEN_PROGRAM = 'TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA';
 

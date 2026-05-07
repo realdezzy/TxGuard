@@ -12,9 +12,15 @@ const configSchema = z.object({
   rateLimitPerKeyMaxRequests: z.coerce.number().int().positive().default(600),
   requestTimeoutMs: z.coerce.number().int().positive().default(30_000),
   apiKey: z.string().min(1).optional(),
+  trustedBlinkDomains: z.string().min(1).optional(),
+  trustedMarketPrograms: z.string().min(1).optional(),
 });
 
-export type ApiConfig = z.infer<typeof configSchema> & { corsOriginList: string[] };
+export type ApiConfig = z.infer<typeof configSchema> & {
+  corsOriginList: string[];
+  trustedBlinkDomainsList: string[];
+  trustedMarketProgramsList: string[];
+};
 
 const LOCALHOST_ORIGINS = ['http://localhost', 'http://127.0.0.1'];
 
@@ -31,6 +37,8 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): ApiConfig {
     rateLimitPerKeyMaxRequests: env['API_RATE_LIMIT_PER_KEY_MAX_REQUESTS'],
     requestTimeoutMs: env['API_REQUEST_TIMEOUT_MS'],
     apiKey: env['API_KEY'],
+    trustedBlinkDomains: env['API_TRUSTED_BLINK_DOMAINS'],
+    trustedMarketPrograms: env['API_TRUSTED_MARKET_PROGRAMS'],
   });
 
   if (!result.success) {
@@ -43,15 +51,23 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): ApiConfig {
   const config = result.data;
 
   if (config.nodeEnv === 'production') {
-    const isLocalhost = LOCALHOST_ORIGINS.some((prefix) =>
-      config.corsOrigin.startsWith(prefix),
+    const origins = config.corsOrigin.includes(',')
+      ? config.corsOrigin.split(',').map(s => s.trim())
+      : [config.corsOrigin];
+    const hasLocalhost = origins.some((origin) =>
+      LOCALHOST_ORIGINS.some((prefix) => origin.startsWith(prefix)),
     );
-    if (isLocalhost) {
+    if (hasLocalhost) {
       throw new Error(
-        'Production configuration error: API_CORS_ORIGIN must not be a localhost address in production.',
+        'Production configuration error: API_CORS_ORIGIN must not contain localhost addresses in production.',
       );
     }
-    if (config.apiKey && config.apiKey.length < 16) {
+    if (!config.apiKey) {
+      throw new Error(
+        'Production configuration error: API_KEY is required in production.',
+      );
+    }
+    if (config.apiKey.length < 16) {
       throw new Error(
         'Production configuration error: API_KEY must be at least 16 characters.',
       );
@@ -63,6 +79,12 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): ApiConfig {
     corsOriginList: config.corsOrigin.includes(',')
       ? config.corsOrigin.split(',').map(s => s.trim())
       : [config.corsOrigin],
+    trustedBlinkDomainsList: config.trustedBlinkDomains
+      ? config.trustedBlinkDomains.split(',').map(s => s.trim()).filter(s => s.length > 0)
+      : [],
+    trustedMarketProgramsList: config.trustedMarketPrograms
+      ? config.trustedMarketPrograms.split(',').map(s => s.trim()).filter(s => s.length > 0)
+      : [],
   };
 }
 

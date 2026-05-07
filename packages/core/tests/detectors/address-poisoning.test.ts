@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { SignalType, RiskLevel } from '../types/index.js';
-import { detectAddressPoisoning } from './address-poisoning.js';
+import { SignalType, RiskLevel } from '../../src/types/index.js';
+import { detectAddressPoisoning } from '../../src/detectors/address-poisoning.js';
 
 const BASE = 'AaBbCcDdEeFfGgHhIiJjKkLlMmNnOoPpQqRrSsTtUu';
 const KNOWN = 'AAAA1111111111111111111111111111111111111111';

@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
-import { detectUnknownPrograms, isTrustedProgram, getTrustedProgramName } from './program-reputation.js';
-import { SignalType, RiskLevel } from '../types/index.js';
-import type { ParsedInstruction, RiskSignal } from '../types/index.js';
+import { detectUnknownPrograms, isTrustedProgram, getTrustedProgramName } from '../../src/detectors/program-reputation.js';
+import { SignalType, RiskLevel } from '../../src/types/index.js';
+import type { ParsedInstruction, RiskSignal } from '../../src/types/index.js';
 
 function makeIx(programId: string, type = 'unknown'): ParsedInstruction {
   return {
@@ -58,7 +58,7 @@ describe('detectUnknownPrograms', () => {
     const result = detectUnknownPrograms(instructions);
     expect(result.signals).toHaveLength(1);
     expect(result.signals[0]!.type).toBe(SignalType.UNKNOWN_PROGRAM);
-    expect(result.signals[0]!.level).toBe(RiskLevel.LOW);
+    expect(result.signals[0]!.level).toBe(RiskLevel.MEDIUM);
     expect(result.unknownPrograms).toEqual([unknown]);
   });
 

@@ -1,5 +1,15 @@
 import { describe, expect, it } from 'vitest';
-import { Keypair, SystemProgram, Transaction, TransactionInstruction, PublicKey } from '@solana/web3.js';
+import {
+  AddressLookupTableAccount,
+  Keypair,
+  PublicKey,
+  SystemProgram,
+  Transaction,
+  TransactionInstruction,
+  TransactionMessage,
+  VersionedTransaction,
+  type Connection,
+} from '@solana/web3.js';
 import {
   createApproveCheckedInstruction,
   createApproveInstruction,
@@ -9,10 +19,10 @@ import {
   createTransferCheckedInstruction,
   createAssociatedTokenAccountInstruction,
 } from '@solana/spl-token';
-import { SignalType } from '../types/index.js';
-import { detectAuthorityChanges } from '../detectors/authority.js';
-import { detectDurableNonce } from '../detectors/durable-nonce.js';
-import { parseTransaction } from './index.js';
+import { SignalType } from '../../src/types/index.js';
+import { detectAuthorityChanges } from '../../src/detectors/authority.js';
+import { detectDurableNonce } from '../../src/detectors/durable-nonce.js';
+import { parseTransaction } from '../../src/parser/index.js';
 
 const ATA_PROGRAM_ID = new PublicKey('ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL');
 const COMPUTE_BUDGET_PROGRAM_ID = new PublicKey('ComputeBudget111111111111111111111111111111');
@@ -254,5 +264,48 @@ describe('parseTransaction', () => {
     expect(cbIx).toBeDefined();
     expect(cbIx!.type).toBe('setComputeUnitPrice');
     expect(cbIx!.data?.microLamports).toBe(1_000_000);
+  });
+
+  it('preserves versioned instructions with explicit warnings when ALT accounts are unavailable', async () => {
+    const payer = Keypair.generate().publicKey;
+    const recipient = Keypair.generate().publicKey;
+    const lookupTableAddress = Keypair.generate().publicKey;
+    const lookupTable = new AddressLookupTableAccount({
+      key: lookupTableAddress,
+      state: {
+        deactivationSlot: BigInt('0xffffffffffffffff'),
+        lastExtendedSlot: 0,
+        lastExtendedSlotStartIndex: 0,
+        authority: payer,
+        addresses: [recipient],
+      },
+    });
+    const message = new TransactionMessage({
+      payerKey: payer,
+      recentBlockhash: Keypair.generate().publicKey.toBase58(),
+      instructions: [
+        SystemProgram.transfer({
+          fromPubkey: payer,
+          toPubkey: recipient,
+          lamports: 1_000,
+        }),
+      ],
+    }).compileToV0Message([lookupTable]);
+    const transaction = new VersionedTransaction(message);
+    const connection = {
+      getAddressLookupTable: async () => ({ context: { slot: 1 }, value: null }),
+    } as unknown as Connection;
+
+    const [instruction] = await parseTransaction(transaction.serialize(), connection);
+
+    expect(instruction).toMatchObject({
+      programId: SystemProgram.programId.toBase58(),
+      type: 'transfer',
+      data: expect.objectContaining({
+        parseWarnings: ['ADDRESS_LOOKUP_TABLE_UNRESOLVED'],
+        unresolvedAccountIndexes: expect.arrayContaining([2]),
+      }),
+    });
+    expect(instruction!.accounts).toContain('unresolvedAccount(2)');
   });
 });

@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
-import { SignalType, RiskLevel } from '../types/index.js';
-import { detectComputeBudgetManipulation } from './compute-budget.js';
-import type { ParsedInstruction, RiskSignal } from '../types/index.js';
+import { SignalType, RiskLevel } from '../../src/types/index.js';
+import { detectComputeBudgetManipulation } from '../../src/detectors/compute-budget.js';
+import type { ParsedInstruction, RiskSignal } from '../../src/types/index.js';
 
 function makeCbPriceIx(): ParsedInstruction {
   return {

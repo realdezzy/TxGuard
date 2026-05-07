@@ -8,6 +8,9 @@ interface CacheClient {
   connect(): Promise<unknown>;
   get(key: string): Promise<string | null>;
   set(key: string, value: string, options?: { EX: number }): Promise<unknown>;
+  incr(key: string): Promise<number>;
+  expire(key: string, seconds: number): Promise<number>;
+  eval(script: string, options: { keys: string[]; arguments: string[] }): Promise<unknown>;
   on(event: 'error', listener: (err: Error) => void): unknown;
 }
 

@@ -365,9 +365,10 @@ function parseComputeBudgetInstruction(programId: string, data: Uint8Array): Par
 }
 
 interface RawInstruction {
-  programId: PublicKey;
-  keys: { pubkey: PublicKey; isSigner: boolean; isWritable: boolean }[];
+  programId: PublicKey | null;
+  keys: { pubkey: PublicKey | null; index: number; isSigner: boolean; isWritable: boolean }[];
   data: Uint8Array;
+  unresolvedAccountIndexes: number[];
 }
 
 async function resolveVersionedTransaction(
@@ -400,18 +401,26 @@ async function resolveVersionedTransaction(
   const numReadonlyUnsigned = message.header.numReadonlyUnsignedAccounts;
   const numWritableUnsigned = allKeys.length - numSigners - numReadonlyUnsigned;
 
-  return message.compiledInstructions.map((ix) => ({
-    programId: allKeys[ix.programIdIndex]!,
-    keys: ix.accountKeyIndexes.map((idx) => {
-      const pubkey = allKeys[idx]!;
-      const isSigner = idx < numSigners;
-      // Writable: signer accounts that are not readonly-signed, or unsigned writable accounts
-      const isWritableSigner = idx < numSigners - numReadonlySigners;
-      const isWritableUnsigned = idx >= numSigners && idx < numSigners + numWritableUnsigned;
-      return { pubkey, isSigner, isWritable: isWritableSigner || isWritableUnsigned };
-    }),
-    data: ix.data,
-  }));
+  return message.compiledInstructions.map((ix) => {
+    const unresolvedAccountIndexes: number[] = [];
+    const programId = allKeys[ix.programIdIndex] ?? null;
+    if (!programId) unresolvedAccountIndexes.push(ix.programIdIndex);
+
+    return {
+      programId,
+      keys: ix.accountKeyIndexes.map((idx) => {
+        const pubkey = allKeys[idx] ?? null;
+        if (!pubkey) unresolvedAccountIndexes.push(idx);
+        const isSigner = idx < numSigners;
+        // Writable: signer accounts that are not readonly-signed, or unsigned writable accounts
+        const isWritableSigner = idx < numSigners - numReadonlySigners;
+        const isWritableUnsigned = idx >= numSigners && idx < numSigners + numWritableUnsigned;
+        return { pubkey, index: idx, isSigner, isWritable: isWritableSigner || isWritableUnsigned };
+      }),
+      data: ix.data,
+      unresolvedAccountIndexes,
+    };
+  });
 }
 
 function resolveLegacyTransaction(bytes: Uint8Array): RawInstruction[] {
@@ -420,10 +429,12 @@ function resolveLegacyTransaction(bytes: Uint8Array): RawInstruction[] {
     programId: ix.programId,
     keys: ix.keys.map((k) => ({
       pubkey: k.pubkey,
+      index: -1,
       isSigner: k.isSigner,
       isWritable: k.isWritable,
     })),
     data: ix.data,
+    unresolvedAccountIndexes: [],
   }));
 }
 
@@ -446,10 +457,10 @@ export async function parseTransaction(
   }
 
   return instructions.map((ix) => {
-    const programId = ix.programId.toBase58();
-    const accounts = ix.keys.map((k) => k.pubkey.toBase58());
+    const programId = ix.programId?.toBase58() ?? `unresolvedProgram(${ix.unresolvedAccountIndexes[0] ?? 'unknown'})`;
+    const accounts = ix.keys.map((k) => k.pubkey?.toBase58() ?? `unresolvedAccount(${k.index})`);
     const accountMeta: AccountMeta[] = ix.keys.map((k) => ({
-      address: k.pubkey.toBase58(),
+      address: k.pubkey?.toBase58() ?? `unresolvedAccount(${k.index})`,
       isSigner: k.isSigner,
       isWritable: k.isWritable,
     }));
@@ -472,13 +483,23 @@ export async function parseTransaction(
       ataParsed.data ??
       computeParsed.data;
 
+    const parseWarnings = ix.unresolvedAccountIndexes.length > 0
+      ? {
+          parseWarnings: ['ADDRESS_LOOKUP_TABLE_UNRESOLVED'],
+          unresolvedAccountIndexes: ix.unresolvedAccountIndexes,
+        }
+      : undefined;
+
     return {
       programId,
       programName: identifyProgram(programId),
       type,
       accounts,
       accountMeta,
-      data: data as Record<string, unknown> | undefined,
+      data: {
+        ...(data as Record<string, unknown> | undefined),
+        ...parseWarnings,
+      },
     };
   });
 }

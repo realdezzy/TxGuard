@@ -15,6 +15,17 @@ export interface SimulateOptions {
   timeoutMs?: number;
 }
 
+interface TokenAccountSnapshot {
+  mint: string;
+  owner: string;
+  amount: number;
+}
+
+interface AccountSnapshot {
+  lamports: number;
+  token?: TokenAccountSnapshot;
+}
+
 function decodeBase64(input: string): Uint8Array {
   const binary = atob(input);
   const bytes = new Uint8Array(binary.length);
@@ -44,20 +55,46 @@ function extractWritableAddresses(bytes: Uint8Array): string[] {
   }
 }
 
-async function fetchPreBalances(
+function decodeTokenAccountData(data: Uint8Array): TokenAccountSnapshot | null {
+  if (data.length < TOKEN_ACCOUNT_SIZE) return null;
+  try {
+    const mint = new PublicKey(data.slice(0, 32)).toBase58();
+    const owner = new PublicKey(data.slice(32, 64)).toBase58();
+    const amount = new DataView(data.buffer, data.byteOffset, data.byteLength).getBigUint64(64, true);
+    return { mint, owner, amount: Number(amount) };
+  } catch {
+    return null;
+  }
+}
+
+function decodeAccountData(data: unknown): Uint8Array | null {
+  if (data instanceof Uint8Array) return data;
+  if (Array.isArray(data) && data[1] === 'base64' && typeof data[0] === 'string') {
+    return decodeBase64(data[0]);
+  }
+  return null;
+}
+
+async function fetchPreAccountSnapshots(
   connection: Connection,
   addresses: string[],
-): Promise<Map<string, number>> {
-  const map = new Map<string, number>();
+): Promise<Map<string, AccountSnapshot>> {
+  const map = new Map<string, AccountSnapshot>();
   if (addresses.length === 0) return map;
   try {
     const pubkeys = addresses.map((a) => new PublicKey(a));
     const infos = await connection.getMultipleAccountsInfo(pubkeys);
     for (let i = 0; i < addresses.length; i++) {
-      map.set(addresses[i]!, infos[i]?.lamports ?? 0);
+      const info = infos[i];
+      const decoded = info ? decodeAccountData(info.data) : null;
+      const token = decoded ? decodeTokenAccountData(decoded) ?? undefined : undefined;
+      map.set(addresses[i]!, {
+        lamports: info?.lamports ?? 0,
+        token,
+      });
     }
   } catch {
-    // Pre-balance fetch is best-effort; deltas will not be reported if unavailable
+    // Pre-account fetch is best-effort; deltas will not be reported if unavailable
   }
   return map;
 }
@@ -95,12 +132,14 @@ export async function simulateTransaction(
         balanceChanges: [],
         unitsConsumed: 0,
         confidence: 'LOW',
+        writableSigners: [],
       };
     }
   }
 
   const writableAddresses = extractWritableAddresses(bytes);
-  const preBalances = await fetchPreBalances(connection, writableAddresses);
+  const preAccountSnapshots = await fetchPreAccountSnapshots(connection, writableAddresses);
+  const txMetadata = getTxMetadata(bytes);
 
   let simulationResponse: Awaited<ReturnType<Connection['simulateTransaction']>>;
   let currentSlot: number | null = null;
@@ -145,6 +184,8 @@ export async function simulateTransaction(
       slot: simulationResponse.context.slot,
       simulationSource: 'rpc',
       stateConsistencyHint: 'recent',
+      feePayer: txMetadata.feePayer,
+      writableSigners: txMetadata.writableSigners,
     };
   }
 
@@ -152,14 +193,28 @@ export async function simulateTransaction(
   const accountResults = (result as { accounts?: ({ lamports?: number; data?: [string, string] | string; owner?: string } | null)[] | null }).accounts;
 
   if (accountResults) {
+    const mintsToFetch: string[] = [];
+    const rawChanges: { address: string; acctResult: any; postToken: TokenAccountSnapshot | null }[] = [];
+
     for (let i = 0; i < writableAddresses.length; i++) {
       const address = writableAddresses[i]!;
       const acctResult = accountResults[i];
       if (!acctResult) continue;
 
+      const decodedPostData = decodeAccountData(acctResult.data);
+      const postToken = decodedPostData ? decodeTokenAccountData(decodedPostData) : null;
+      if (postToken) {
+        mintsToFetch.push(postToken.mint);
+      }
+      rawChanges.push({ address, acctResult, postToken });
+    }
+
+    const mintDecimals = await fetchMintDecimals(connection, mintsToFetch);
+
+    for (const { address, acctResult, postToken } of rawChanges) {
       const postLamports = acctResult.lamports ?? null;
       if (postLamports !== null) {
-        const preLamports = preBalances.get(address) ?? 0;
+        const preLamports = preAccountSnapshots.get(address)?.lamports ?? 0;
         const delta = (postLamports - preLamports) / LAMPORTS_PER_SOL;
         if (delta !== 0) {
           balanceChanges.push({
@@ -167,32 +222,31 @@ export async function simulateTransaction(
             before: preLamports / LAMPORTS_PER_SOL,
             after: postLamports / LAMPORTS_PER_SOL,
             delta,
+            decimals: 9,
+            symbol: 'SOL',
           });
         }
       }
 
-      // Decode SPL token account data (165 bytes, base64-encoded)
-      const rawData = acctResult.data;
-      if (rawData && Array.isArray(rawData) && rawData[1] === 'base64' && typeof rawData[0] === 'string') {
-        try {
-          const decoded = decodeBase64(rawData[0]);
-          if (decoded.length >= TOKEN_ACCOUNT_SIZE) {
-            const mint = new PublicKey(decoded.slice(0, 32)).toBase58();
-            const owner = new PublicKey(decoded.slice(32, 64)).toBase58();
-            const amount = new DataView(decoded.buffer, decoded.byteOffset, decoded.byteLength).getBigUint64(64, true);
+      if (postToken) {
+        const preToken = preAccountSnapshots.get(address)?.token;
+        const beforeRaw = preToken?.mint === postToken.mint ? preToken.amount : 0;
+        const afterRaw = postToken.amount;
+        const deltaRaw = afterRaw - beforeRaw;
 
-            balanceChanges.push({
-              account: address,
-              before: 0,
-              after: Number(amount),
-              delta: Number(amount),
-              token: 'SPL',
-              mint,
-              owner,
-            });
-          }
-        } catch {
-          // Not a valid token account; skip
+        if (deltaRaw !== 0) {
+          const decimals = mintDecimals.get(postToken.mint) ?? 0;
+          const factor = Math.pow(10, decimals);
+          balanceChanges.push({
+            account: address,
+            before: beforeRaw / factor,
+            after: afterRaw / factor,
+            delta: deltaRaw / factor,
+            token: 'SPL',
+            mint: postToken.mint,
+            owner: postToken.owner,
+            decimals,
+          });
         }
       }
     }
@@ -232,7 +286,58 @@ export async function simulateTransaction(
     replaceRecentBlockhash: isVersioned ? true : undefined,
     simulationSource: 'rpc',
     stateConsistencyHint,
+    feePayer: txMetadata.feePayer,
+    writableSigners: txMetadata.writableSigners,
   };
+}
+
+function getTxMetadata(bytes: Uint8Array): { feePayer?: string; writableSigners: string[] } {
+  try {
+    const versioned = VersionedTransaction.deserialize(bytes);
+    const msg = versioned.message;
+    const feePayer = msg.staticAccountKeys[0]?.toBase58();
+    const writableSigners = msg.staticAccountKeys
+      .filter((_, i) => msg.isAccountSigner(i) && msg.isAccountWritable(i))
+      .map((k) => k.toBase58());
+    return { feePayer, writableSigners };
+  } catch {
+    try {
+      const legacy = Transaction.from(bytes);
+      return {
+        feePayer: legacy.feePayer?.toBase58(),
+        writableSigners: legacy.instructions
+          .flatMap((ix) => ix.keys)
+          .filter((k) => k.isSigner && k.isWritable)
+          .map((k) => k.pubkey.toBase58()),
+      };
+    } catch {
+      return { writableSigners: [] };
+    }
+  }
+}
+
+async function fetchMintDecimals(connection: Connection, mints: string[]): Promise<Map<string, number>> {
+  const map = new Map<string, number>();
+  const uniqueMints = [...new Set(mints)];
+  if (uniqueMints.length === 0) return map;
+  
+  try {
+    const pubkeys = uniqueMints.map((m) => new PublicKey(m));
+    const infos = await connection.getMultipleAccountsInfo(pubkeys);
+    for (let i = 0; i < pubkeys.length; i++) {
+      const info = infos[i];
+      if (info && info.data.length >= 44) {
+        // Mint decimals are at byte 44 in SPL Token Mint account
+        const decimals = info.data[44];
+        if (decimals !== undefined) {
+          map.set(uniqueMints[i]!, decimals);
+        }
+      }
+    }
+  } catch {
+    // Best effort
+  }
+  return map;
 }
 
 export function simulationToSignal(
@@ -250,7 +355,7 @@ export function simulationToSignal(
   }
 
   const largeSolTransfers = sim.balanceChanges.filter(
-    (c) => Math.abs(c.delta) > largeTransferThresholdSol,
+    (c) => !c.token && Math.abs(c.delta) > largeTransferThresholdSol,
   );
 
   if (largeSolTransfers.length > 0) {

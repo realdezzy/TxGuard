@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
-import { SignalType, RiskLevel } from '../types/index.js';
-import { detectWritablePatterns } from './writable-pattern.js';
-import type { ParsedInstruction } from '../types/index.js';
+import { SignalType, RiskLevel } from '../../src/types/index.js';
+import { detectWritablePatterns } from '../../src/detectors/writable-pattern.js';
+import type { ParsedInstruction } from '../../src/types/index.js';
 
 const TOKEN_PROGRAM = 'TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA';
 
@@ -67,7 +67,7 @@ describe('detectWritablePatterns', () => {
     const { signals } = detectWritablePatterns(instructions);
     expect(signals).toHaveLength(1);
     expect(signals[0]).toMatchObject({
-      type: SignalType.AUTHORITY_CHANGE,
+      type: SignalType.WRITABLE_PATTERN,
       level: RiskLevel.HIGH,
     });
     expect(signals[0]!.metadata?.count).toBe(3);

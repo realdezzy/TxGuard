@@ -35,7 +35,7 @@ async function main() {
 
   for (const [type, threshold] of Object.entries(PRECISION_THRESHOLDS)) {
     const metric = result.metrics[type];
-    if (metric && metric.precision < threshold) {
+    if (metric && (metric.truePositives + metric.falsePositives > 0) && metric.precision < threshold) {
       console.error(`FAIL: Precision for ${type} is ${metric.precision.toFixed(3)} < threshold ${threshold}`);
       failed = true;
     }

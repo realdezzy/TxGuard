@@ -28,7 +28,7 @@ export function detectBlinkUrl(url: string): boolean {
   );
 }
 
-export function analyzeBlinkUrl(url: string): BlinkAnalysis {
+export function analyzeBlinkUrl(url: string, trustedDomains?: string[]): BlinkAnalysis {
   if (!detectBlinkUrl(url)) {
     return { isBlink: false, trusted: false, signal: null };
   }
@@ -51,7 +51,10 @@ export function analyzeBlinkUrl(url: string): BlinkAnalysis {
     };
   }
 
-  const trusted = TRUSTED_BLINK_DOMAINS.has(domain);
+  const effectiveDomains = trustedDomains && trustedDomains.length > 0
+    ? new Set(trustedDomains)
+    : TRUSTED_BLINK_DOMAINS;
+  const trusted = effectiveDomains.has(domain);
 
   if (!trusted) {
     return {

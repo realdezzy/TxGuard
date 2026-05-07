@@ -13,12 +13,16 @@ export function buildProviderChain(): AIProvider[] {
 
   const providers: AIProvider[] = [];
 
+  const knownNames = new Set(['openai', 'anthropic', 'groq', 'ollama']);
+
   for (const name of priority) {
     switch (name) {
       case 'openai': {
         const key = process.env['OPENAI_API_KEY'];
         if (key) {
           providers.push(new OpenAIProvider({ apiKey: key, model: process.env['OPENAI_MODEL'] }));
+        } else {
+          console.warn('AI_PROVIDER_PRIORITY includes openai but OPENAI_API_KEY is not set');
         }
         break;
       }
@@ -28,6 +32,8 @@ export function buildProviderChain(): AIProvider[] {
           providers.push(
             new AnthropicProvider({ apiKey: key, model: process.env['ANTHROPIC_MODEL'] }),
           );
+        } else {
+          console.warn('AI_PROVIDER_PRIORITY includes anthropic but ANTHROPIC_API_KEY is not set');
         }
         break;
       }
@@ -35,6 +41,8 @@ export function buildProviderChain(): AIProvider[] {
         const key = process.env['GROQ_API_KEY'];
         if (key) {
           providers.push(new GroqProvider({ apiKey: key, model: process.env['GROQ_MODEL'] }));
+        } else {
+          console.warn('AI_PROVIDER_PRIORITY includes groq but GROQ_API_KEY is not set');
         }
         break;
       }
@@ -47,7 +55,15 @@ export function buildProviderChain(): AIProvider[] {
         );
         break;
       }
+      default:
+        if (name.length > 0) {
+          console.warn(`Unknown provider "${name}" in AI_PROVIDER_PRIORITY. Supported: ${[...knownNames].join(', ')}`);
+        }
     }
+  }
+
+  if (providers.length === 0 && priority.some(p => p.length > 0)) {
+    console.warn('No AI providers configured. Transaction explanations will use the template fallback.');
   }
 
   return providers;

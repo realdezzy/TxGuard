@@ -31,6 +31,9 @@ export const SignalType = {
   WALLET_SPOOFING: 'WALLET_SPOOFING',
   COMPUTE_BUDGET_MANIPULATION: 'COMPUTE_BUDGET_MANIPULATION',
   INTENT_ANOMALY: 'INTENT_ANOMALY',
+  SOLPHISH_PATTERN: 'SOLPHISH_PATTERN',
+  ACCOUNT_METADATA_UNAVAILABLE: 'ACCOUNT_METADATA_UNAVAILABLE',
+  WRITABLE_PATTERN: 'WRITABLE_PATTERN',
 } as const;
 
 export type SignalType = (typeof SignalType)[keyof typeof SignalType];
@@ -78,6 +81,8 @@ export interface BalanceChange {
   token?: string;
   mint?: string;
   owner?: string;
+  symbol?: string;
+  decimals?: number;
 }
 
 export interface SimulationResult {
@@ -92,6 +97,8 @@ export interface SimulationResult {
   cluster?: string;
   simulationSource?: string;
   stateConsistencyHint?: 'recent' | 'slightly_stale' | 'stale';
+  feePayer?: string;
+  writableSigners: string[];
 }
 
 export interface TransactionAnalysis {
@@ -123,4 +130,6 @@ export interface GuardianConfig {
   knownContacts?: Map<string, string>;
   similarityThreshold?: number;
   simulationTimeoutMs?: number;
+  trustedBlinkDomains?: string[];
+  trustedMarketPrograms?: string[];
 }

@@ -22,7 +22,7 @@ export function detectDurableNonce(instructions: ParsedInstruction[]): DurableNo
     nonceAccount,
     signal: {
       type: SignalType.DURABLE_NONCE,
-      level: RiskLevel.HIGH,
+      level: RiskLevel.MEDIUM,
       title: 'Durable Nonce Transaction',
       message:
         'This transaction uses a durable nonce, meaning it can be submitted at any future time. ' +

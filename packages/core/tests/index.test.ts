@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { Keypair, SystemProgram, Transaction } from '@solana/web3.js';
-import { analyzeTransaction } from './index.js';
-import { RiskLevel, SignalType } from './types/index.js';
+import { analyzeTransaction } from '../src/index.js';
+import { RiskLevel, SignalType } from '../src/types/index.js';
 
 function serializeUnsigned(transaction: Transaction): string {
   transaction.recentBlockhash = Keypair.generate().publicKey.toBase58();

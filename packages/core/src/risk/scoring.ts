@@ -1,10 +1,10 @@
 import { RiskLevel, SignalType, type RiskSignal, type WhyScoreReason, type ScoreVarianceHint } from '../types/index.js';
 
-export const SCORING_VERSION = '1.1.0';
+export const SCORING_VERSION = '1.2.0';
 
 export const SIGNAL_WEIGHTS: Record<SignalType, number> = {
-  [SignalType.ADDRESS_POISONING]: 40,
-  [SignalType.DURABLE_NONCE]: 30,
+  [SignalType.ADDRESS_POISONING]: 30,
+  [SignalType.DURABLE_NONCE]: 10,
   [SignalType.AUTHORITY_CHANGE]: 20,
   [SignalType.UNKNOWN_PROGRAM]: 10,
   [SignalType.BLINK_PHISHING]: 35,
@@ -20,7 +20,10 @@ export const SIGNAL_WEIGHTS: Record<SignalType, number> = {
   [SignalType.CLICKJACKING]: 45,
   [SignalType.WALLET_SPOOFING]: 35,
   [SignalType.COMPUTE_BUDGET_MANIPULATION]: 15,
-  [SignalType.INTENT_ANOMALY]: 30,
+  [SignalType.INTENT_ANOMALY]: 20,
+  [SignalType.SOLPHISH_PATTERN]: 40,
+  [SignalType.ACCOUNT_METADATA_UNAVAILABLE]: 20,
+  [SignalType.WRITABLE_PATTERN]: 15,
 };
 
 export const LEVEL_MULTIPLIERS: Record<RiskLevel, number> = {

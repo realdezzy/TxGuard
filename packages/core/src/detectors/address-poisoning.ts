@@ -38,8 +38,10 @@ export interface AddressPoisoningResult {
 export function detectAddressPoisoning(
   target: string,
   history: string[],
-  threshold: number = 0.85,
+  threshold: number = 0.90,
 ): AddressPoisoningResult {
+  let bestMatch: { addr: string; similarity: number; distance: number } | null = null;
+
   for (const addr of history) {
     if (addr === target) continue;
 
@@ -61,18 +63,29 @@ export function detectAddressPoisoning(
     const similarity = 1 - distance / maxLen;
 
     if (similarity >= threshold) {
-      return {
-        signal: {
-          type: SignalType.ADDRESS_POISONING,
-          level: similarity >= 0.95 ? RiskLevel.CRITICAL : RiskLevel.HIGH,
-          title: 'Possible Address Poisoning',
-          message: `Recipient is ${(similarity * 100).toFixed(1)}% similar to known address "${addr.slice(0, 6)}...${addr.slice(-4)}". Verify carefully.`,
-          metadata: { target, matchedAddress: addr, similarity, distance },
-        },
-        matchedAddress: addr,
-        similarity,
-      };
+      if (!bestMatch || similarity > bestMatch.similarity) {
+        bestMatch = { addr, similarity, distance };
+      }
     }
+  }
+
+  if (bestMatch) {
+    return {
+      signal: {
+        type: SignalType.ADDRESS_POISONING,
+        level: bestMatch.similarity >= 0.95 ? RiskLevel.CRITICAL : RiskLevel.HIGH,
+        title: 'Possible Address Poisoning',
+        message: `Recipient is ${(bestMatch.similarity * 100).toFixed(1)}% similar to known address "${bestMatch.addr.slice(0, 6)}...${bestMatch.addr.slice(-4)}". Verify carefully.`,
+        metadata: {
+          target,
+          matchedAddress: bestMatch.addr,
+          similarity: bestMatch.similarity,
+          distance: bestMatch.distance,
+        },
+      },
+      matchedAddress: bestMatch.addr,
+      similarity: bestMatch.similarity,
+    };
   }
 
   return { signal: null };

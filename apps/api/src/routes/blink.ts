@@ -19,14 +19,13 @@ blinkRouter.post('/preview', async (req, res) => {
   }
 
   const { url, account } = parsed.data;
-  const blinkAnalysis = analyzeBlinkUrl(url);
+  const blinkAnalysis = analyzeBlinkUrl(url, config.trustedBlinkDomainsList);
 
   if (!blinkAnalysis.isBlink) {
     res.status(400).json({ error: 'URL is not a recognized Solana Action / Blink' });
     return;
   }
 
-  // Wrap fetchBlinkPayload with a timeout
   const payloadPromise = fetchBlinkPayload(url, account);
   const timeoutPromise = new Promise<never>((_, reject) =>
     setTimeout(() => reject(new Error('Blink payload fetch timed out')), 5000),

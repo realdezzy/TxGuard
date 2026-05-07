@@ -10,3 +10,4 @@ export {
   type ProgramReputationResult,
 } from './program-reputation.js';
 export { classifyIntent, TransactionIntent } from './intent.js';
+export { detectSolPhish, type SolPhishResult, type SolPhishKind } from './solphish.js';

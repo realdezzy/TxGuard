@@ -13,7 +13,7 @@ export function formatSol(solValue: number): { formatted: string; suspicious: bo
   }
 
   // Short scale formatting
-  let formatted = '';
+  let formatted: string;
   if (absValue >= 1e9) {
     formatted = `${(solValue / 1e9).toFixed(2)}B`;
   } else if (absValue >= 1e6) {

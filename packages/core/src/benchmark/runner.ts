@@ -176,5 +176,18 @@ export function formatBenchmarkReport(result: BenchmarkResult): string {
     }
   }
 
+  if (Object.keys(result.fprPerIntent).length > 0) {
+    lines.push('');
+    lines.push('False Positive Rate (FPR) per Intent:');
+    for (const [intent, types] of Object.entries(result.fprPerIntent)) {
+      const activeTypes = Object.entries(types).filter(([_, fpr]) => fpr > 0);
+      if (activeTypes.length === 0) continue;
+      lines.push(`  ${intent}:`);
+      for (const [type, fpr] of activeTypes) {
+        lines.push(`    - ${type}: ${fpr.toFixed(3)}`);
+      }
+    }
+  }
+
   return lines.join('\n');
 }

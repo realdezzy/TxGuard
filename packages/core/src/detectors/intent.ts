@@ -23,17 +23,7 @@ export interface ClassifyIntentResult {
   anomalies: IntentAnomaly[];
 }
 
-const DEX_PROGRAMS = new Set([
-  'JUP6LkbZbjS1jKKwapdHNy74zcZ3tLUZoi5QNyVTaV4',
-  'JUP4Fb2cqiRUcaTHdrPC8h2gNsA2ETXiPDD33WcGuJB',
-  'whirLbMiicVdio4qvUfM5KAg6Ct8VwpYzGff3uctyCc',
-  '675kPX9MHTjS2zt1qfr1NYHuzeLXfQM9H24wFSUt1Mp8',
-  'CAMMCzo5YL8w4VFF8KVHrK22GGUsp5VTaW7grrKgrWqK',
-  '9xQeWvG816bUx9EPjHmaT23yvVM2ZWbrrpZb9PusVFin',
-  'srmqPvymJeFKQ4zGQed1GFppgkRHL9kaELCbyksJtPX',
-  'LBUZKhRxPF3XUpBCjp4YzTKgLccjZhTSDM9YuVaPwxo',
-  'Eo7WjKq67rjJQSZxS6z3YkapzY3eMj6Xy8X5EQVn5UaB',
-]);
+import { DEX_PROGRAMS } from '../constants/programs.js';
 
 const METAPLEX_METADATA = 'metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s';
 

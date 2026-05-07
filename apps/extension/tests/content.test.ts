@@ -1,6 +1,16 @@
+// @vitest-environment jsdom
 import { describe, expect, it, beforeEach } from 'vitest';
 import fs from 'fs';
 import path from 'path';
+import { RiskLevel, SignalType } from '@txguard/core';
+import {
+  detectBrowserThreats,
+  detectFramingRisk,
+  detectOverlayRisk,
+  detectSeedPhraseInput,
+  detectWalletSpoofingRisk,
+  type BrowserThreatContext,
+} from '../utils/browser-threat-detectors.js';
 
 const overlayHtml = fs.readFileSync(path.join(__dirname, 'fixtures/transparent-overlay.html'), 'utf8');
 const seedPhraseHtml = fs.readFileSync(path.join(__dirname, 'fixtures/seed-phrase-input.html'), 'utf8');
@@ -9,54 +19,20 @@ const iframeClickjackHtml = fs.readFileSync(path.join(__dirname, 'fixtures/ifram
 const benignModalHtml = fs.readFileSync(path.join(__dirname, 'fixtures/benign-modal.html'), 'utf8');
 const walletDownloadHtml = fs.readFileSync(path.join(__dirname, 'fixtures/wallet-download-prompt.html'), 'utf8');
 
-const SEED_PHRASE_TERMS = ['seed phrase', 'recovery phrase', 'secret recovery', 'private key', 'mnemonic'];
-const WALLET_TERMS = ['phantom', 'solflare', 'backpack', 'approve', 'connect wallet', 'sign transaction'];
-const WALLET_DOWNLOAD_TERMS = ['download phantom', 'install solflare', 'get backpack', 'download wallet'];
-
-function detectsSeedPhraseInput(html: string): boolean {
+function setHtml(html: string) {
   document.body.innerHTML = html;
-  const inputs = [...document.querySelectorAll('input, textarea, [contenteditable], label')];
-  return inputs.some(el => {
-    const text = (el.textContent || (el as HTMLInputElement).value || '').toLowerCase();
-    return SEED_PHRASE_TERMS.some(term => text.includes(term));
-  });
 }
 
-function countWalletControls(html: string): number {
-  document.body.innerHTML = html;
-  return [...document.querySelectorAll('button, a, [role="button"], input[type="button"], input[type="submit"]')]
-    .filter(el => {
-      const text = (el.textContent ?? '').trim().toLowerCase();
-      return WALLET_TERMS.some(term => text.includes(term));
-    }).length;
-}
-
-function detectsWalletDownloadPrompt(html: string): boolean {
-  document.body.innerHTML = html;
-  const allText = (document.body.textContent ?? '').toLowerCase();
-  return WALLET_DOWNLOAD_TERMS.some(term => allText.includes(term));
-}
-
-function hasTransparentOverlay(html: string): boolean {
-  document.body.innerHTML = html;
-  const elements = [...document.querySelectorAll('body *')];
-  return elements.some(el => {
-    const style = (el as HTMLElement).style;
-    const position = style.position;
-    const opacity = parseFloat(style.opacity || '1');
-    const zIndex = parseInt(style.zIndex || '0', 10);
-    const pointerEvents = style.pointerEvents;
-    return (
-      ['fixed', 'absolute', 'sticky'].includes(position) &&
-      pointerEvents !== 'none' &&
-      (opacity < 0.2 || zIndex > 9999)
-    );
-  });
-}
-
-function hasIframeEmbedding(html: string): boolean {
-  document.body.innerHTML = html;
-  return document.querySelectorAll('iframe').length > 0;
+function context(overrides: Partial<BrowserThreatContext> = {}): BrowserThreatContext {
+  return {
+    url: 'https://example.test',
+    hostname: 'example.test',
+    isFramed: false,
+    isTrustedOrigin: false,
+    viewportWidth: 1024,
+    viewportHeight: 768,
+    ...overrides,
+  };
 }
 
 describe('Browser Threat Detection DOM Logic', () => {
@@ -66,63 +42,110 @@ describe('Browser Threat Detection DOM Logic', () => {
 
   describe('Seed Phrase Phishing', () => {
     it('detects seed phrase inputs in DOM', () => {
-      expect(detectsSeedPhraseInput(seedPhraseHtml)).toBe(true);
+      setHtml(seedPhraseHtml);
+      const signal = detectSeedPhraseInput(document, context());
+      expect(signal).toMatchObject({
+        type: SignalType.WALLET_SPOOFING,
+        level: RiskLevel.CRITICAL,
+      });
     });
 
     it('does not false-positive on benign modal', () => {
-      expect(detectsSeedPhraseInput(benignModalHtml)).toBe(false);
+      setHtml(benignModalHtml);
+      expect(detectSeedPhraseInput(document, context())).toBeNull();
     });
 
     it('does not false-positive on wallet download prompt', () => {
-      expect(detectsSeedPhraseInput(walletDownloadHtml)).toBe(false);
+      setHtml(walletDownloadHtml);
+      expect(detectSeedPhraseInput(document, context())).toBeNull();
     });
   });
 
   describe('Wallet Spoofing', () => {
     it('detects fake wallet controls in DOM', () => {
-      expect(countWalletControls(fakeWalletHtml)).toBe(4);
+      setHtml(fakeWalletHtml);
+      const signals = detectWalletSpoofingRisk(document, context());
+      expect(signals).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            category: 'dom',
+            signal: expect.objectContaining({ type: SignalType.WALLET_SPOOFING }),
+          }),
+        ]),
+      );
     });
 
-    it('benign modal has zero wallet-like controls', () => {
-      expect(countWalletControls(benignModalHtml)).toBe(0);
+    it('benign modal has no wallet-like spoofing signals', () => {
+      setHtml(benignModalHtml);
+      expect(detectWalletSpoofingRisk(document, context())).toHaveLength(0);
     });
   });
 
   describe('Wallet Download Prompt Detection', () => {
     it('detects wallet download prompts from non-wallet domain', () => {
-      expect(detectsWalletDownloadPrompt(walletDownloadHtml)).toBe(true);
+      setHtml(walletDownloadHtml);
+      const signals = detectWalletSpoofingRisk(document, context());
+      expect(signals.some((item) => item.signal.title === 'Suspicious Wallet Download Prompt')).toBe(true);
     });
 
-    it('does not trigger on benign modals', () => {
-      expect(detectsWalletDownloadPrompt(benignModalHtml)).toBe(false);
-    });
-
-    it('does not trigger on fake wallet modal without download text', () => {
-      expect(detectsWalletDownloadPrompt(fakeWalletHtml)).toBe(false);
+    it('does not trigger on official wallet domains', () => {
+      setHtml(walletDownloadHtml);
+      const signals = detectWalletSpoofingRisk(document, context({ hostname: 'phantom.app' }));
+      expect(signals.some((item) => item.signal.title === 'Suspicious Wallet Download Prompt')).toBe(false);
     });
   });
 
-  describe('Clickjacking — Transparent Overlay', () => {
+  describe('Clickjacking', () => {
     it('identifies transparent overlay risk characteristics', () => {
-      expect(hasTransparentOverlay(overlayHtml)).toBe(true);
+      setHtml(overlayHtml);
+      const signals = detectOverlayRisk(document, context());
+      expect(signals).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            category: 'dom',
+            signal: expect.objectContaining({ type: SignalType.CLICKJACKING }),
+          }),
+        ]),
+      );
     });
 
-    it('does not trigger on benign modal', () => {
-      expect(hasTransparentOverlay(benignModalHtml)).toBe(false);
+    it('does not trigger overlay risk on benign modal', () => {
+      setHtml(benignModalHtml);
+      expect(detectOverlayRisk(document, context())).toHaveLength(0);
+    });
+
+    it('detects framed page risk', () => {
+      setHtml(iframeClickjackHtml);
+      const signal = detectFramingRisk(context({ isFramed: true, crossOrigin: true, referrer: 'https://attacker.test' }));
+      expect(signal).toMatchObject({
+        category: 'origin',
+        signal: expect.objectContaining({ type: SignalType.CLICKJACKING }),
+      });
+    });
+
+    it('does not detect framed page risk for trusted origins', () => {
+      const signal = detectFramingRisk(context({ isFramed: true, isTrustedOrigin: true }));
+      expect(signal).toBeNull();
     });
   });
 
-  describe('Clickjacking — iframe', () => {
-    it('detects iframe embedding in clickjack fixture', () => {
-      expect(hasIframeEmbedding(iframeClickjackHtml)).toBe(true);
+  describe('Aggregated production path', () => {
+    it('returns critical signal for seed phrase phishing', () => {
+      setHtml(seedPhraseHtml);
+      const signals = detectBrowserThreats(document, context());
+      expect(signals).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            type: SignalType.WALLET_SPOOFING,
+            level: RiskLevel.CRITICAL,
+          }),
+        ]),
+      );
     });
 
-    it('iframe clickjack fixture also has transparent overlay', () => {
-      expect(hasTransparentOverlay(iframeClickjackHtml)).toBe(true);
-    });
-
-    it('does not detect iframe in benign modal', () => {
-      expect(hasIframeEmbedding(benignModalHtml)).toBe(false);
+    it('does not produce signals for benign modal fixture', () => {
+      setHtml(benignModalHtml);
+      expect(detectBrowserThreats(document, context())).toHaveLength(0);
     });
   });
 });

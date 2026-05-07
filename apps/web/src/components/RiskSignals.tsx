@@ -6,6 +6,10 @@ interface RiskSignalsProps {
   signals: RiskSignal[];
 }
 
+interface TransferMetadata {
+  transfers?: Array<{ delta?: unknown }>;
+}
+
 export function RiskSignals({ signals }: RiskSignalsProps) {
   // Filtering and cleaning logic
   const processedSignals = signals
@@ -13,9 +17,12 @@ export function RiskSignals({ signals }: RiskSignalsProps) {
       // 1. Remove noisy LARGE_TRANSFER if it doesn't meet the threshold or has realistic data
       // Note: The threshold in core is 10, but we double check here in case of bad metadata.
       if (sig.type === SignalType.LARGE_TRANSFER) {
-        const metadata = sig.metadata as any;
+        const metadata = sig.metadata as TransferMetadata | undefined;
         if (metadata?.transfers && Array.isArray(metadata.transfers)) {
-          const maxDelta = Math.max(...metadata.transfers.map((t: any) => Math.abs(t.delta)));
+          const deltas = metadata.transfers
+            .map((transfer) => transfer.delta)
+            .filter((delta): delta is number => typeof delta === 'number');
+          const maxDelta = deltas.length > 0 ? Math.max(...deltas.map((delta) => Math.abs(delta))) : 0;
           if (maxDelta < 10) return false;
         }
       }

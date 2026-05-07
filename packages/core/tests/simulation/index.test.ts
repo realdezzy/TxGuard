@@ -1,8 +1,8 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { Connection } from '@solana/web3.js';
-import { simulateTransaction, simulationToSignal, simulationUnavailableToSignal } from './index.js';
-import { SignalType, RiskLevel } from '../types/index.js';
-import { Keypair, SystemProgram, Transaction } from '@solana/web3.js';
+import { simulateTransaction, simulationToSignal, simulationUnavailableToSignal } from '../../src/simulation/index.js';
+import { SignalType, RiskLevel } from '../../src/types/index.js';
+import { Keypair, PublicKey, SystemProgram, Transaction } from '@solana/web3.js';
 
 function serializeUnsigned(transaction: Transaction): string {
   transaction.recentBlockhash = Keypair.generate().publicKey.toBase58();
@@ -28,6 +28,14 @@ function makeTx(): string {
   return serializeUnsigned(
     new Transaction().add(SystemProgram.transfer({ fromPubkey: from, toPubkey: to, lamports: 1_000 })),
   );
+}
+
+function makeTokenAccountData(mint: PublicKey, owner: PublicKey, amount: bigint): Buffer {
+  const data = Buffer.alloc(165);
+  mint.toBuffer().copy(data, 0);
+  owner.toBuffer().copy(data, 32);
+  data.writeBigUInt64LE(amount, 64);
+  return data;
 }
 
 describe('simulateTransaction', () => {
@@ -57,6 +65,61 @@ describe('simulateTransaction', () => {
     expect(result.balanceChanges[0]!.delta).toBeCloseTo(-0.001, 5);
     expect(result.balanceChanges[0]!.before).toBeCloseTo(5, 5);
     expect(result.balanceChanges[0]!.after).toBeCloseTo(4.999, 5);
+  });
+
+  it('returns SPL token balance deltas from pre and post account data', async () => {
+    const rawTx = makeTx();
+    const mint = Keypair.generate().publicKey;
+    const owner = Keypair.generate().publicKey;
+    const preTokenData = makeTokenAccountData(mint, owner, 10n);
+    const postTokenData = makeTokenAccountData(mint, owner, 3n);
+
+    const connection = mockConnection({
+      getMultipleAccountsInfo: vi.fn()
+        .mockResolvedValueOnce([
+          {
+            lamports: 2_039_280,
+            data: preTokenData,
+            owner: new PublicKey('TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA'),
+            executable: false,
+            rentEpoch: 0,
+          },
+        ])
+        .mockResolvedValueOnce([
+          {
+            lamports: 1_461_600,
+            data: Buffer.alloc(82), // Minimal mint data, decimals at byte 44 will be 0
+            owner: new PublicKey('TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA'),
+            executable: false,
+            rentEpoch: 0,
+          },
+        ]),
+      simulateTransaction: vi.fn().mockResolvedValue({
+        context: { slot: 100 },
+        value: {
+          err: null,
+          logs: [],
+          unitsConsumed: 5000,
+          accounts: [
+            {
+              lamports: 2_039_280,
+              data: [postTokenData.toString('base64'), 'base64'],
+            },
+          ],
+        },
+      }),
+    });
+
+    const result = await simulateTransaction(connection, rawTx);
+    const tokenChange = result.balanceChanges.find((change) => change.token === 'SPL');
+
+    expect(tokenChange).toMatchObject({
+      before: 10,
+      after: 3,
+      delta: -7,
+      mint: mint.toBase58(),
+      owner: owner.toBase58(),
+    });
   });
 
   it('returns success with empty balance changes when accounts response is absent', async () => {
@@ -145,6 +208,17 @@ describe('simulationToSignal', () => {
       balanceChanges: [{ account: 'abc', before: 100, after: 85, delta: -15 }],
     });
     expect(signal?.type).toBe(SignalType.LARGE_TRANSFER);
+  });
+
+  it('does not classify large raw SPL unit deltas as large SOL transfers', () => {
+    const signal = simulationToSignal({
+      success: true,
+      logs: [],
+      unitsConsumed: 0,
+      confidence: 'HIGH',
+      balanceChanges: [{ account: 'abc', before: 1_000_000, after: 0, delta: -1_000_000, token: 'SPL' }],
+    });
+    expect(signal).toBeNull();
   });
 
   it('returns null for safe small transfer', () => {

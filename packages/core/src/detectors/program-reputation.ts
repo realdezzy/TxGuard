@@ -1,31 +1,6 @@
 import { RiskLevel, SignalType, type RiskSignal, type ParsedInstruction, type ProgramTrustLevel, type ProgramUpgradeable } from '../types/index.js';
 
-// Static allowlist of known, trusted Solana programs.
-// v1: manually curated. v2: user-submitted additions via extension settings.
-const TRUSTED_PROGRAMS: ReadonlyMap<string, string> = new Map([
-  ['11111111111111111111111111111111', 'System Program'],
-  ['TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA', 'SPL Token'],
-  ['TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb', 'Token-2022'],
-  ['ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL', 'Associated Token Account'],
-  ['ComputeBudget111111111111111111111111111111', 'Compute Budget'],
-  ['MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr', 'Memo Program'],
-  ['Memo1UhkJBfCR961jRFkhY6UXen1PhA5Kpo9dZSEqGKR', 'Memo Program (v1)'],
-  ['Stake11111111111111111111111111111111111111', 'Stake Program'],
-  ['Vote111111111111111111111111111111111111111', 'Vote Program'],
-  ['SysvarRent111111111111111111111111111111111', 'Sysvar Rent'],
-  ['SysvarC1ock11111111111111111111111111111111', 'Sysvar Clock'],
-  ['JUP6LkbZbjS1jKKwapdHNy74zcZ3tLUZoi5QNyVTaV4', 'Jupiter v6'],
-  ['JUP4Fb2cqiRUcaTHdrPC8h2gNsA2ETXiPDD33WcGuJB', 'Jupiter v4'],
-  ['whirLbMiicVdio4qvUfM5KAg6Ct8VwpYzGff3uctyCc', 'Orca Whirlpool'],
-  ['675kPX9MHTjS2zt1qfr1NYHuzeLXfQM9H24wFSUt1Mp8', 'Raydium AMM v4'],
-  ['CAMMCzo5YL8w4VFF8KVHrK22GGUsp5VTaW7grrKgrWqK', 'Raydium CLMM'],
-  ['MarBmsSgKXdrN1egZf5sqe1TMai9K1rChYNDJgjq7aD', 'Marinade Finance'],
-  ['metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s', 'Metaplex Token Metadata'],
-  ['9xQeWvG816bUx9EPjHmaT23yvVM2ZWbrrpZb9PusVFin', 'Serum DEX v3'],
-  ['srmqPvymJeFKQ4zGQed1GFppgkRHL9kaELCbyksJtPX', 'Serum DEX v4 (OpenBook)'],
-  ['LBUZKhRxPF3XUpBCjp4YzTKgLccjZhTSDM9YuVaPwxo', 'Meteora DLMM'],
-  ['Eo7WjKq67rjJQSZxS6z3YkapzY3eMj6Xy8X5EQVn5UaB', 'Meteora Pools'],
-]);
+import { TRUSTED_PROGRAMS } from '../constants/programs.js';
 
 export function isTrustedProgram(programId: string): boolean {
   return TRUSTED_PROGRAMS.has(programId);
@@ -102,7 +77,7 @@ export function detectUnknownPrograms(
   } else if (unknownPrograms.length >= 2 || hasWritableRisk) {
     level = RiskLevel.MEDIUM;
   } else {
-    level = RiskLevel.LOW; // Baseline risk for NEW programs is now LOW instead of MEDIUM
+    level = RiskLevel.MEDIUM;
   }
 
   const signals: RiskSignal[] = [{

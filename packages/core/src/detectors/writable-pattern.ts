@@ -42,7 +42,7 @@ export function detectWritablePatterns(instructions: ParsedInstruction[]): Writa
   const uniqueThirdParty = new Set(thirdPartyWritableTokenAccounts.map((a) => a.address));
   if (uniqueThirdParty.size >= 3) {
     signals.push({
-      type: SignalType.AUTHORITY_CHANGE,
+      type: SignalType.WRITABLE_PATTERN,
       level: RiskLevel.HIGH,
       title: 'Multiple Third-Party Writable Token Accounts',
       message:

@@ -5,6 +5,7 @@ export function requestLogging(req: Request, res: Response, next: NextFunction):
   const requestId = req.header('x-request-id') ?? crypto.randomUUID();
   const start = Date.now();
 
+  (req as any).id = requestId;
   res.setHeader('x-request-id', requestId);
 
   res.on('finish', () => {

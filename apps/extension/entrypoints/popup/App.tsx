@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
-import type { TransactionAnalysis } from '@txguard/core';
-import { RiskLevel } from '@txguard/core';
+import type { TransactionAnalysis, RiskSignal } from '@txguard/core';
+import { RiskLevel, SignalType } from '@txguard/core';
 import Settings from './Settings';
 
 interface HistoryItem {
@@ -15,6 +15,7 @@ interface HistoryItem {
 export default function App() {
   const [history, setHistory] = useState<HistoryItem[]>([]);
   const [selectedItem, setSelectedItem] = useState<HistoryItem | null>(null);
+  const [selectedSignal, setSelectedSignal] = useState<RiskSignal | null>(null);
   const [loading, setLoading] = useState(true);
   const [showSettings, setShowSettings] = useState(false);
   const [cluster, setCluster] = useState('devnet');
@@ -135,20 +136,33 @@ export default function App() {
                      {currentAnalysis.explanation}
                    </p>
 
-                   <div className="space-y-2">
-                     {currentAnalysis.signals.slice(0, 3).map((sig, i) => (
-                       <div key={i} className="flex items-center gap-3 p-2.5 rounded-xl bg-white/5 border border-white/5 text-[11px]">
-                         <div className={`p-1.5 rounded-lg ${
-                           sig.level === RiskLevel.CRITICAL ? 'bg-red-500/20 text-red-400' : 'bg-orange-500/20 text-orange-400'
-                         }`}>
-                           <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
-                           </svg>
-                         </div>
-                         <span className="font-bold opacity-80">{sig.title}</span>
-                       </div>
-                     ))}
-                   </div>
+                    <div className="space-y-2">
+                      {currentAnalysis.signals.map((sig, i) => (
+                        <button
+                          key={i}
+                          onClick={() => setSelectedSignal(sig)}
+                          className="w-full flex items-center gap-3 p-2.5 rounded-xl bg-white/5 border border-white/5 text-[11px] text-left hover:bg-white/10 hover:border-white/10 active:scale-[0.98] transition-all cursor-pointer"
+                        >
+                          <div className={`p-1.5 rounded-lg shrink-0 ${
+                            sig.level === RiskLevel.CRITICAL ? 'bg-red-500/20 text-red-400' :
+                            sig.level === RiskLevel.HIGH ? 'bg-orange-500/20 text-orange-400' :
+                            sig.level === RiskLevel.MEDIUM ? 'bg-yellow-500/20 text-yellow-400' :
+                            'bg-primary/20 text-primary'
+                          }`}>
+                            <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+                            </svg>
+                          </div>
+                          <div className="min-w-0">
+                            <span className="font-bold opacity-80 block truncate">{sig.title}</span>
+                            <span className="text-[10px] text-white/30">{sig.type.replace(/_/g, ' ')}</span>
+                          </div>
+                          <svg className="w-3 h-3 text-white/20 ml-auto shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                          </svg>
+                        </button>
+                      ))}
+                    </div>
                  </div>
               </section>
             )}
@@ -202,6 +216,125 @@ export default function App() {
           Protected by <span className="text-white/40 font-black">TxGuard Engine v1.5</span>
         </p>
       </footer>
+
+      {selectedSignal && (
+        <div
+          className="fixed inset-0 z-50 flex items-end sm:items-center justify-center"
+          onClick={(e) => { if (e.target === e.currentTarget) setSelectedSignal(null); }}
+        >
+          <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" />
+          <div className="relative w-full max-w-[400px] max-h-[85vh] bg-[#0a0a0a] border border-white/10 rounded-t-2xl sm:rounded-2xl shadow-2xl overflow-hidden animate-[txguard-pop_0.3s_cubic-bezier(0.16,1,0.3,1)]">
+            <style>{`
+              @keyframes txguard-pop {
+                from { transform: translateY(20px) scale(0.97); opacity: 0; }
+                to { transform: translateY(0) scale(1); opacity: 1; }
+              }
+            `}</style>
+
+            {/* Modal header */}
+            <div className="flex items-center justify-between px-5 py-4 border-b border-white/5">
+              <div className="flex items-center gap-3">
+                <div className={`p-1.5 rounded-lg ${
+                  selectedSignal.level === RiskLevel.CRITICAL ? 'bg-red-500/20 text-red-400' :
+                  selectedSignal.level === RiskLevel.HIGH ? 'bg-orange-500/20 text-orange-400' :
+                  selectedSignal.level === RiskLevel.MEDIUM ? 'bg-yellow-500/20 text-yellow-400' :
+                  'bg-primary/20 text-primary'
+                }`}>
+                  <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                  </svg>
+                </div>
+                <h3 className="text-sm font-black text-white">Threat Details</h3>
+              </div>
+              <button
+                onClick={() => setSelectedSignal(null)}
+                className="p-2 rounded-lg hover:bg-white/5 transition-colors text-white/30 hover:text-white/60"
+              >
+                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+            </div>
+
+            {/* Modal body */}
+            <div className="overflow-y-auto max-h-[55vh] custom-scrollbar">
+              <div className="p-5 space-y-5">
+                {/* Severity badge */}
+                <div className="flex items-center gap-3">
+                  <div className={`text-[10px] px-2.5 py-1 rounded-lg font-black uppercase tracking-wider border ${
+                    selectedSignal.level === RiskLevel.CRITICAL ? 'bg-red-500/10 text-red-400 border-red-500/20' :
+                    selectedSignal.level === RiskLevel.HIGH ? 'bg-orange-500/10 text-orange-400 border-orange-500/20' :
+                    selectedSignal.level === RiskLevel.MEDIUM ? 'bg-yellow-500/10 text-yellow-400 border-yellow-500/20' :
+                    'bg-primary/10 text-primary border-primary/20'
+                  }`}>
+                    {selectedSignal.level}
+                  </div>
+                  <span className="text-[10px] text-white/30 uppercase tracking-wider">
+                    {selectedSignal.type.replace(/_/g, ' ')}
+                  </span>
+                </div>
+
+                {/* Title */}
+                <h2 className="text-lg font-black leading-tight text-white">
+                  {selectedSignal.title}
+                </h2>
+
+                {/* Description */}
+                <div className="p-4 rounded-xl bg-white/5 border border-white/5">
+                  <p className="text-sm leading-relaxed text-white/80">
+                    {selectedSignal.message}
+                  </p>
+                </div>
+
+                {/* Metadata */}
+                {selectedSignal.metadata && Object.keys(selectedSignal.metadata).length > 0 && (
+                  <div className="space-y-3">
+                    <h4 className="text-[10px] font-black text-white/30 uppercase tracking-[0.15em]">Technical Details</h4>
+                    <div className="p-4 rounded-xl bg-white/[0.03] border border-white/[0.06] space-y-2.5">
+                      {Object.entries(selectedSignal.metadata).map(([key, value]) => (
+                        <div key={key} className="flex justify-between items-start gap-4">
+                          <span className="text-[10px] font-bold text-white/30 uppercase tracking-wider shrink-0">{key.replace(/([A-Z])/g, ' $1').trim()}</span>
+                          <span className="text-[11px] text-white/60 text-right break-all font-mono">
+                            {typeof value === 'object' && value !== null
+                              ? JSON.stringify(value, null, 0).slice(0, 120) + (JSON.stringify(value).length > 120 ? '...' : '')
+                              : String(value).slice(0, 120)}
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {/* Context info if available */}
+                {currentAnalysis && (
+                  <div className="grid grid-cols-2 gap-3">
+                    <div className="p-3 rounded-xl bg-white/[0.03] border border-white/[0.06]">
+                      <div className="text-[9px] text-white/20 uppercase tracking-wider font-bold mb-1">Risk Score</div>
+                      <div className="text-sm font-black text-white/80">{currentAnalysis.riskScore}<span className="text-white/20 text-xs">/100</span></div>
+                    </div>
+                    <div className="p-3 rounded-xl bg-white/[0.03] border border-white/[0.06]">
+                      <div className="text-[9px] text-white/20 uppercase tracking-wider font-bold mb-1">Simulation</div>
+                      <div className={`text-xs font-bold ${currentAnalysis.simulation ? 'text-primary/80' : 'text-white/20'}`}>
+                        {currentAnalysis.simulation?.success ? 'Passed' : currentAnalysis.simulation ? 'Failed' : 'Unavailable'}
+                      </div>
+                    </div>
+                  </div>
+                )}
+              </div>
+            </div>
+
+            {/* Modal footer */}
+            <div className="px-5 py-3 border-t border-white/5 bg-black/20">
+              <button
+                onClick={() => setSelectedSignal(null)}
+                className="w-full py-2.5 rounded-xl bg-white/10 hover:bg-white/15 text-white/80 text-sm font-bold transition-all active:scale-[0.98]"
+              >
+                Close
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

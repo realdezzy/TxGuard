@@ -4,7 +4,6 @@ import { analyzeTransaction } from '@txguard/core';
 import { buildProviderChain } from '../services/providers.js';
 import { getSolanaConnection } from '../services/solana.js';
 import { generateTxHash, getCachedAnalysis, setCachedAnalysis } from '../services/cache.js';
-import { config } from '../services/config.js';
 
 export const analyzeRouter: Router = Router();
 
@@ -46,13 +45,15 @@ analyzeRouter.post('/', async (req, res) => {
   } catch (err) {
     const requestId = (req as any).id ?? 'unknown';
     const message = err instanceof Error ? err.message : 'Unknown error';
-    const category = message.includes('RPC') || message.includes('simulation')
-      ? 'rpc_error'
-      : message.includes('timeout') || message.includes('Timeout')
-        ? 'timeout'
-        : message.includes('parse') || message.includes('deserialize')
-          ? 'parse_error'
-          : 'internal_error';
+    const category: string = err instanceof Error && err.constructor !== Error
+      ? err.constructor.name.replace(/Error$/, '') 
+      : message.includes('RPC') || message.includes('simulation')
+        ? 'rpc_error'
+        : message.includes('timeout') || message.includes('Timeout')
+          ? 'timeout'
+          : message.includes('parse') || message.includes('deserialize')
+            ? 'parse_error'
+            : 'internal_error';
     console.error(JSON.stringify({ requestId, event: 'analysis_failed', category, message }));
     res.status(500).json({ error: 'Analysis failed', category });
   }
