@@ -18,7 +18,11 @@ export default function App() {
   const [selectedSignal, setSelectedSignal] = useState<RiskSignal | null>(null);
   const [loading, setLoading] = useState(true);
   const [showSettings, setShowSettings] = useState(false);
+  const [showAllHistory, setShowAllHistory] = useState(false);
   const [cluster, setCluster] = useState('devnet');
+  const [activeTabUrl, setActiveTabUrl] = useState<string | null>(null);
+  const [retentionDays, setRetentionDays] = useState(1);
+  const [deleting, setDeleting] = useState(false);
 
   useEffect(() => {
     loadHistory();
@@ -27,12 +31,17 @@ export default function App() {
   const loadHistory = async () => {
     setLoading(true);
     try {
-      const settingsData = await browser.storage.local.get('settings');
+      const [settingsData, tabs] = await Promise.all([
+        browser.storage.local.get('settings'),
+        browser.tabs.query({ active: true, currentWindow: true }),
+      ]);
       const settings = (settingsData.settings || {}) as Record<string, any>;
-      const retentionDays = settings.historyRetentionDays || 7;
+      const days = settings.historyRetentionDays ?? 1;
+      setRetentionDays(days);
       setCluster(settings.cluster || 'devnet');
-      const cutoffTime = Date.now() - retentionDays * 24 * 60 * 60 * 1000;
+      setActiveTabUrl(tabs[0]?.url ?? null);
 
+      const cutoffTime = Date.now() - days * 24 * 60 * 60 * 1000;
       const response = await browser.runtime.sendMessage({ type: 'GET_HISTORY' });
       const validHistory = (response || []).filter((item: HistoryItem) => item.timestamp > cutoffTime);
 
@@ -46,6 +55,68 @@ export default function App() {
       setLoading(false);
     }
   };
+
+  const deleteItem = async (itemId: string) => {
+    setDeleting(true);
+    try {
+      const data = await browser.storage.local.get('history');
+      const all: HistoryItem[] = Array.isArray(data.history) ? data.history : [];
+      const filtered = all.filter((h: HistoryItem) => h.id !== itemId);
+      await browser.storage.local.set({ history: filtered });
+      const updated = history.filter((h) => h.id !== itemId);
+      setHistory(updated);
+      if (selectedItem?.id === itemId) {
+        setSelectedItem(updated.length > 0 ? updated[0] : null);
+      }
+    } catch (err) {
+      console.error('Failed to delete item:', err);
+    } finally {
+      setDeleting(false);
+    }
+  };
+
+  const clearAllHistory = async () => {
+    setDeleting(true);
+    try {
+      await browser.storage.local.set({ history: [] });
+      setHistory([]);
+      setSelectedItem(null);
+    } catch (err) {
+      console.error('Failed to clear history:', err);
+    } finally {
+      setDeleting(false);
+    }
+  };
+
+  const purgeOldHistory = async () => {
+    setDeleting(true);
+    try {
+      const data = await browser.storage.local.get('history');
+      const all: HistoryItem[] = Array.isArray(data.history) ? data.history : [];
+      const cutoffTime = Date.now() - retentionDays * 24 * 60 * 60 * 1000;
+      const kept = all.filter((h: HistoryItem) => h.timestamp > cutoffTime);
+      await browser.storage.local.set({ history: kept });
+      setHistory(kept);
+    } catch (err) {
+      console.error('Failed to purge history:', err);
+    } finally {
+      setDeleting(false);
+    }
+  };
+
+  const normalizeUrl = (url: string | undefined): string => {
+    if (!url) return '';
+    try {
+      const u = new URL(url);
+      return u.origin + u.pathname;
+    } catch { return url; }
+  };
+
+  const filteredHistory = showAllHistory
+    ? history
+    : activeTabUrl
+      ? history.filter((item) => normalizeUrl(item.url) === normalizeUrl(activeTabUrl))
+      : history;
 
   const currentAnalysis = selectedItem?.analysis;
 
@@ -96,10 +167,10 @@ export default function App() {
           <div className="h-full flex items-center justify-center italic text-white/20 text-sm">
             <div className="flex flex-col items-center gap-4">
               <div className="w-6 h-6 border-2 border-primary/20 border-t-primary rounded-full animate-spin"></div>
-              <span>Scanning history...</span>
+              <span>Loading...</span>
             </div>
           </div>
-        ) : history.length === 0 ? (
+        ) : filteredHistory.length === 0 ? (
           <div className="h-full flex flex-col items-center justify-center text-center">
              <div className="w-16 h-16 rounded-2xl bg-white/5 border border-dashed border-white/10 flex items-center justify-center mb-6">
                <svg className="w-8 h-8 text-white/20" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -167,46 +238,81 @@ export default function App() {
               </section>
             )}
 
-            {/* History List */}
-            <section className="space-y-4">
-              <h3 className="text-[10px] font-black text-white/20 uppercase tracking-[0.2em] pl-1">History</h3>
-              <div className="space-y-2 pb-8">
-                {history.map((item) => (
-                  <button
-                    key={item.id}
-                    onClick={() => setSelectedItem(item)}
-                    className={`w-full flex items-center justify-between p-3 rounded-2xl transition-all border group ${
-                      selectedItem?.id === item.id 
-                        ? 'bg-white/10 border-white/10 ring-1 ring-white/10' 
-                        : 'bg-transparent border-transparent hover:bg-white/5'
-                    }`}
-                  >
-                    <div className="flex items-center gap-4">
-                      <div className={`w-2 h-2 rounded-full shadow-[0_0_8px] transition-all ${
-                        item.analysis.riskLevel === RiskLevel.CRITICAL ? 'bg-red-500 shadow-red-500/40' :
-                        item.analysis.riskLevel === RiskLevel.HIGH ? 'bg-orange-500 shadow-orange-500/40' :
-                        item.analysis.riskLevel === RiskLevel.MEDIUM ? 'bg-yellow-500 shadow-yellow-500/40' : 'bg-primary shadow-primary/40'
-                      }`} />
-                      <div className="text-left">
-                        <div className="text-[13px] font-bold group-hover:text-white transition-colors">
-                          {item.type === 'blink' ? 'Blink Interaction' : item.type === 'browser' ? 'Threat Detected' : 'Transaction Scan'}
-                        </div>
-                        <div className="text-[10px] text-white/30 font-medium uppercase tracking-wider mt-0.5">
-                          {item.type === 'browser' && item.title
-                            ? item.title.slice(0, 24) + (item.title.length > 24 ? '...' : '')
-                            : new Date(item.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                        </div>
+            {/* History controls */}
+            <div className="flex items-center justify-between">
+              <h3 className="text-[10px] font-black text-white/20 uppercase tracking-[0.2em] pl-1">
+                {showAllHistory ? 'All History' : 'This Tab'} ({filteredHistory.length})
+              </h3>
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={() => { setShowAllHistory(!showAllHistory); setSelectedItem(null); }}
+                  className="text-[9px] px-2 py-1 rounded-md bg-white/5 hover:bg-white/10 text-white/40 hover:text-white/60 transition-all"
+                >
+                  {showAllHistory ? 'This Tab' : 'Show All'}
+                </button>
+                <button
+                  onClick={purgeOldHistory}
+                  disabled={deleting}
+                  className="text-[9px] px-2 py-1 rounded-md bg-white/5 hover:bg-white/10 text-white/30 hover:text-white/50 transition-all"
+                  title={`Delete older than ${retentionDays}d`}
+                >
+                  Purge
+                </button>
+                <button
+                  onClick={clearAllHistory}
+                  disabled={deleting}
+                  className="text-[9px] px-2 py-1 rounded-md bg-red-500/10 hover:bg-red-500/20 text-red-400 hover:text-red-300 transition-all"
+                >
+                  Clear All
+                </button>
+              </div>
+            </div>
+
+            <div className="space-y-2 pb-8">
+              {filteredHistory.map((item) => (
+                <button
+                  key={item.id}
+                  onClick={() => setSelectedItem(item)}
+                  className={`w-full flex items-center justify-between p-3 rounded-2xl transition-all border group ${
+                    selectedItem?.id === item.id 
+                      ? 'bg-white/10 border-white/10 ring-1 ring-white/10' 
+                      : 'bg-transparent border-transparent hover:bg-white/5'
+                  }`}
+                >
+                  <div className="flex items-center gap-4 min-w-0">
+                    <div className={`w-2 h-2 rounded-full shadow-[0_0_8px] shrink-0 transition-all ${
+                      item.analysis.riskLevel === RiskLevel.CRITICAL ? 'bg-red-500 shadow-red-500/40' :
+                      item.analysis.riskLevel === RiskLevel.HIGH ? 'bg-orange-500 shadow-orange-500/40' :
+                      item.analysis.riskLevel === RiskLevel.MEDIUM ? 'bg-yellow-500 shadow-yellow-500/40' : 'bg-primary shadow-primary/40'
+                    }`} />
+                    <div className="text-left min-w-0">
+                      <div className="text-[13px] font-bold group-hover:text-white transition-colors truncate">
+                        {item.type === 'blink' ? 'Blink Interaction' : item.type === 'browser' ? 'Threat Detected' : 'Transaction Scan'}
                       </div>
+                      <div className="text-[10px] text-white/30 font-medium uppercase tracking-wider mt-0.5">
+                        {new Date(item.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                      </div>
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-1 ml-2 shrink-0">
+                    <div
+                      className="p-1 rounded-md hover:bg-red-500/20 opacity-0 group-hover:opacity-100 transition-all"
+                      onClick={(e) => { e.stopPropagation(); deleteItem(item.id); }}
+                      title="Delete"
+                    >
+                      <svg className="w-3.5 h-3.5 text-red-400/70" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                      </svg>
                     </div>
                     <div className="p-1.5 rounded-lg bg-white/5 opacity-0 group-hover:opacity-100 transition-all">
                       <svg className="w-4 h-4 text-white/40" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M9 5l7 7-7 7" />
                       </svg>
                     </div>
-                  </button>
-                ))}
-              </div>
-            </section>
+                  </div>
+                </button>
+              ))}
+            </div>
           </div>
         )}
       </main>
@@ -231,7 +337,6 @@ export default function App() {
               }
             `}</style>
 
-            {/* Modal header */}
             <div className="flex items-center justify-between px-5 py-4 border-b border-white/5">
               <div className="flex items-center gap-3">
                 <div className={`p-1.5 rounded-lg ${
@@ -256,10 +361,8 @@ export default function App() {
               </button>
             </div>
 
-            {/* Modal body */}
             <div className="overflow-y-auto max-h-[55vh] custom-scrollbar">
               <div className="p-5 space-y-5">
-                {/* Severity badge */}
                 <div className="flex items-center gap-3">
                   <div className={`text-[10px] px-2.5 py-1 rounded-lg font-black uppercase tracking-wider border ${
                     selectedSignal.level === RiskLevel.CRITICAL ? 'bg-red-500/10 text-red-400 border-red-500/20' :
@@ -274,19 +377,16 @@ export default function App() {
                   </span>
                 </div>
 
-                {/* Title */}
                 <h2 className="text-lg font-black leading-tight text-white">
                   {selectedSignal.title}
                 </h2>
 
-                {/* Description */}
                 <div className="p-4 rounded-xl bg-white/5 border border-white/5">
                   <p className="text-sm leading-relaxed text-white/80">
                     {selectedSignal.message}
                   </p>
                 </div>
 
-                {/* Metadata */}
                 {selectedSignal.metadata && Object.keys(selectedSignal.metadata).length > 0 && (
                   <div className="space-y-3">
                     <h4 className="text-[10px] font-black text-white/30 uppercase tracking-[0.15em]">Technical Details</h4>
@@ -305,7 +405,6 @@ export default function App() {
                   </div>
                 )}
 
-                {/* Context info if available */}
                 {currentAnalysis && (
                   <div className="grid grid-cols-2 gap-3">
                     <div className="p-3 rounded-xl bg-white/[0.03] border border-white/[0.06]">
@@ -323,7 +422,6 @@ export default function App() {
               </div>
             </div>
 
-            {/* Modal footer */}
             <div className="px-5 py-3 border-t border-white/5 bg-black/20">
               <button
                 onClick={() => setSelectedSignal(null)}

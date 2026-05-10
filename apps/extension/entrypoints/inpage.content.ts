@@ -6,10 +6,15 @@ export default defineContentScript({
   main() {
     const log = (...args: any[]) => console.log('[TxGuard Inpage]', ...args);
 
-    const analyzeTx = (transaction: any): Promise<{ approved: boolean; riskLevel?: string; riskScore?: number; explanation?: string }> => {
+    const analyzeTx = (transaction: any): Promise<{
+      approved: boolean;
+      riskLevel?: string;
+      riskScore?: number;
+      explanation?: string;
+    }> => {
       return new Promise((resolve, reject) => {
         const eventId = crypto.randomUUID();
-        
+
         const timeout = setTimeout(() => {
           window.removeEventListener('message', handleResponse);
           reject(new Error('TxGuard analysis timed out'));
@@ -30,47 +35,203 @@ export default defineContentScript({
 
         window.addEventListener('message', handleResponse);
 
-        window.postMessage({
-          type: 'TXGUARD_ANALYZE_TX',
-          eventId,
-          transaction: transaction.serialize({ requireAllSignatures: false }).toString('base64'),
-        }, window.location.origin);
+        window.postMessage(
+          {
+            type: 'TXGUARD_ANALYZE_TX',
+            eventId,
+            transaction: transaction
+              .serialize({ requireAllSignatures: false })
+              .toString('base64'),
+          },
+          window.location.origin,
+        );
       });
+    };
+
+    const checkMessageSafety = (): Promise<{
+      approved: boolean;
+      threatCount: number;
+      riskLevel?: string;
+    }> => {
+      return new Promise((resolve) => {
+        const eventId = crypto.randomUUID();
+
+        const timeout = setTimeout(() => {
+          window.removeEventListener('message', handleResponse);
+          resolve({ approved: true, threatCount: 0 });
+        }, 5_000);
+
+        const handleResponse = (event: MessageEvent) => {
+          if (event.data?.type === 'TXGUARD_MESSAGE_RESULT' && event.data?.eventId === eventId) {
+            clearTimeout(timeout);
+            window.removeEventListener('message', handleResponse);
+            resolve({
+              approved: event.data.approved,
+              threatCount: event.data.threatCount ?? 0,
+              riskLevel: event.data.riskLevel,
+            });
+          }
+        };
+
+        window.addEventListener('message', handleResponse);
+
+        window.postMessage(
+          { type: 'TXGUARD_CHECK_MESSAGE', eventId },
+          window.location.origin,
+        );
+      });
+    };
+
+    const wrapMethod = (
+      provider: any,
+      prop: string,
+      wrapper: (original: Function, walletName: string) => Function,
+      walletName: string,
+    ) => {
+      const hasGetter = (p: string) => {
+        const d = Object.getOwnPropertyDescriptor(provider, p);
+        return d && typeof d.get === 'function';
+      };
+      const getOriginal = (p: string) => {
+        if (hasGetter(p)) {
+          return Object.getOwnPropertyDescriptor(provider, p)!
+            .get!.call(provider)
+            ?.bind(provider);
+        }
+        return provider[p]?.bind(provider);
+      };
+
+      const original = getOriginal(prop);
+      if (!original) return false;
+
+      const wrapped = wrapper(original, walletName);
+
+      try {
+        Object.defineProperty(provider, prop, {
+          value: wrapped,
+          writable: true,
+          configurable: true,
+          enumerable: true,
+        });
+        log(`${prop}: wrapped successfully`);
+      } catch (err) {
+        log(`${prop}: defineProperty failed, falling back`, (err as Error).message);
+        try {
+          provider[prop] = wrapped;
+        } catch {
+          log(`${prop}: all wrapping attempts failed`);
+          return false;
+        }
+      }
+
+      return true;
     };
 
     const wrapSolanaProvider = (provider: any) => {
       if (!provider || provider.__isTxGuardWrapped) return;
 
-      log('Wrapping Solana provider:', provider.name || 'unnamed');
+      const walletName =
+        provider.isPhantom
+          ? 'Phantom'
+          : provider.isSolflare
+            ? 'Solflare'
+            : provider.isBackpack
+              ? 'Backpack'
+              : provider.name ||
+                Object.getPrototypeOf(provider)?.constructor?.name ||
+                'unnamed';
 
-      const originalSignTransaction = provider.signTransaction?.bind(provider);
-      const originalSignAllTransactions = provider.signAllTransactions?.bind(provider);
+      const hasGetter = (prop: string) => {
+        const d = Object.getOwnPropertyDescriptor(provider, prop);
+        return d && typeof d.get === 'function';
+      };
 
-      if (originalSignTransaction) {
-        provider.signTransaction = async (transaction: any) => {
-          log('Intercepted signTransaction');
-          const result = await analyzeTx(transaction);
-          if (result.approved) {
-            return originalSignTransaction(transaction);
-          }
-          const riskInfo = result.riskLevel ? ` [${result.riskLevel} risk, score ${result.riskScore}]` : '';
-          throw new Error(`Transaction rejected by TxGuard${riskInfo}`);
-        };
-      }
+      log(
+        'Wrapping provider:',
+        walletName,
+        hasGetter('signTransaction') ? '(getter-based)' : '(property-based)',
+      );
 
-      if (originalSignAllTransactions) {
-        provider.signAllTransactions = async (transactions: any[]) => {
-          log('Intercepted signAllTransactions');
-          for (let i = 0; i < transactions.length; i++) {
-            const result = await analyzeTx(transactions[i]);
-            if (!result.approved) {
-              const riskInfo = result.riskLevel ? ` [${result.riskLevel} risk, score ${result.riskScore}]` : '';
-              throw new Error(`Batch transaction #${i + 1} rejected by TxGuard${riskInfo}`);
+      // signTransaction
+      wrapMethod(
+        provider,
+        'signTransaction',
+        (original) =>
+          async function (this: any, transaction: any) {
+            log('Intercepted signTransaction on', walletName);
+            const result = await analyzeTx(transaction);
+            if (result.approved) return original(transaction);
+            const riskInfo = result.riskLevel
+              ? ` [${result.riskLevel} risk, score ${result.riskScore}]`
+              : '';
+            throw new Error(`Transaction rejected by TxGuard${riskInfo}`);
+          },
+        walletName,
+      );
+
+      // signAllTransactions
+      wrapMethod(
+        provider,
+        'signAllTransactions',
+        (original) =>
+          async function (this: any, transactions: any[]) {
+            log(
+              'Intercepted signAllTransactions on',
+              walletName,
+              `(${transactions.length} txs)`,
+            );
+            for (let i = 0; i < transactions.length; i++) {
+              const result = await analyzeTx(transactions[i]);
+              if (!result.approved) {
+                const riskInfo = result.riskLevel
+                  ? ` [${result.riskLevel} risk, score ${result.riskScore}]`
+                  : '';
+                throw new Error(
+                  `Batch transaction #${i + 1} rejected by TxGuard${riskInfo}`,
+                );
+              }
             }
-          }
-          return originalSignAllTransactions(transactions);
-        };
-      }
+            return original(transactions);
+          },
+        walletName,
+      );
+
+      // signAndSendTransaction — signs AND broadcasts in one call
+      wrapMethod(
+        provider,
+        'signAndSendTransaction',
+        (original) =>
+          async function (this: any, transaction: any, options?: any) {
+            log('Intercepted signAndSendTransaction on', walletName);
+            const result = await analyzeTx(transaction);
+            if (result.approved) return original(transaction, options);
+            const riskInfo = result.riskLevel
+              ? ` [${result.riskLevel} risk, score ${result.riskScore}]`
+              : '';
+            throw new Error(
+              `Transaction rejected by TxGuard${riskInfo}`,
+            );
+          },
+        walletName,
+      );
+
+      // signMessage — prevent message signing on high-risk pages
+      wrapMethod(
+        provider,
+        'signMessage',
+        (original) =>
+          async function (this: any, message: Uint8Array, display?: string) {
+            log('Intercepted signMessage on', walletName);
+            const safety = await checkMessageSafety();
+            if (!safety.approved) {
+              throw new Error(
+                `Message signing blocked by TxGuard — ${safety.threatCount} browser threat${safety.threatCount !== 1 ? 's' : ''} detected on this page`,
+              );
+            }
+            return original(message, display);
+          },
+        walletName,
+      );
 
       provider.__isTxGuardWrapped = true;
     };
@@ -80,35 +241,47 @@ export default defineContentScript({
 
       const providers: Array<{ name: string; obj: any }> = [];
 
-      // Standard Solana provider (used by Phantom, Solflare in compatibility mode, etc.)
       if (win.solana) providers.push({ name: 'solana', obj: win.solana });
-
-      // Wallet-specific namespaces
       if (win.solflare) providers.push({ name: 'solflare', obj: win.solflare });
       if (win.backpack) providers.push({ name: 'backpack', obj: win.backpack });
       if (win.coinbaseSolana) providers.push({ name: 'coinbaseSolana', obj: win.coinbaseSolana });
 
-      // Nested namespaces
       if (win.phantom?.solana) providers.push({ name: 'phantom.solana', obj: win.phantom.solana });
       if (win.okxwallet?.solana) providers.push({ name: 'okxwallet.solana', obj: win.okxwallet.solana });
       if (win.trustwallet?.solana) providers.push({ name: 'trustwallet.solana', obj: win.trustwallet.solana });
       if (win.nightly?.solana) providers.push({ name: 'nightly.solana', obj: win.nightly.solana });
       if (win.bitget?.solana) providers.push({ name: 'bitget.solana', obj: win.bitget.solana });
 
-      // Wallet Standard API (newer wallets)
       try {
-        const walletStandard = win.navigator?.wallets as Array<{ accounts: any[]; signTransaction?: any; signAllTransactions?: any; name?: string }>;
+        const walletStandard = win.navigator?.wallets as Array<{
+          accounts: any[];
+          signTransaction?: any;
+          signAllTransactions?: any;
+          signAndSendTransaction?: any;
+          signMessage?: any;
+          name?: string;
+        }>;
         if (walletStandard && typeof walletStandard[Symbol.iterator] === 'function') {
           for (const wallet of walletStandard) {
-            if (wallet.signTransaction || wallet.signAllTransactions) {
-              providers.push({ name: wallet.name || 'wallet-standard', obj: wallet });
+            if (
+              wallet.signTransaction ||
+              wallet.signAllTransactions ||
+              wallet.signAndSendTransaction ||
+              wallet.signMessage
+            ) {
+              providers.push({
+                name: wallet.name || 'wallet-standard',
+                obj: wallet,
+              });
             }
           }
         }
-      } catch { /* wallet standard not available */ }
+      } catch {
+        /* wallet standard not available */
+      }
 
       const wrapped = new Set<any>();
-      for (const { name, obj } of providers) {
+      for (const { obj } of providers) {
         if (wrapped.has(obj)) continue;
         wrapped.add(obj);
         wrapSolanaProvider(obj);
@@ -127,9 +300,12 @@ export default defineContentScript({
         }
       }
     });
-    
+
     if (document.documentElement) {
-      observer.observe(document.documentElement, { childList: true, subtree: true });
+      observer.observe(document.documentElement, {
+        childList: true,
+        subtree: true,
+      });
     }
 
     scan();

@@ -398,56 +398,74 @@ export default defineContentScript({
       if (event.source !== window) return;
       if (event.origin !== window.location.origin) return;
       const data = event.data;
-      if (!data || typeof data !== 'object' || data.type !== 'TXGUARD_ANALYZE_TX') return;
-      if (typeof data.transaction !== 'string' || typeof data.eventId !== 'string') return;
+      if (!data || typeof data !== 'object') return;
 
-      // Validate payload constraints
-      if (data.transaction.length > MAX_TX_PAYLOAD_BYTES) return;
-      if (!EVENT_ID_PATTERN.test(data.eventId)) return;
+      // Handle transaction analysis requests
+      if (data.type === 'TXGUARD_ANALYZE_TX') {
+        if (typeof data.transaction !== 'string' || typeof data.eventId !== 'string') return;
+        if (data.transaction.length > MAX_TX_PAYLOAD_BYTES) return;
+        if (!EVENT_ID_PATTERN.test(data.eventId)) return;
 
-      browser.runtime.sendMessage({
-        type: 'ANALYZE_TRANSACTION',
-        transaction: data.transaction,
-        eventId: data.eventId
-      }).then((response) => {
-        if (response?.error || response?.approved === false && !response?.requiresUserDecision) {
+        browser.runtime.sendMessage({
+          type: 'ANALYZE_TRANSACTION',
+          transaction: data.transaction,
+          eventId: data.eventId
+        }).then((response) => {
+          if (response?.error || response?.approved === false && !response?.requiresUserDecision) {
+            window.postMessage({
+              type: 'TXGUARD_RESULT',
+              eventId: data.eventId,
+              approved: false,
+              error: response?.error || 'Analysis rejected the transaction',
+              riskLevel: response?.analysis?.riskLevel,
+              riskScore: response?.analysis?.riskScore,
+              explanation: response?.analysis?.explanation,
+            }, window.location.origin);
+            return;
+          }
+          if (response?.analysis && response.requiresUserDecision) {
+            showGuardianOverlay(response.analysis, (approved) => {
+              window.postMessage({
+                type: 'TXGUARD_RESULT',
+                eventId: data.eventId,
+                approved,
+                riskLevel: response.analysis.riskLevel,
+                riskScore: response.analysis.riskScore,
+              }, window.location.origin);
+            });
+          } else {
+            window.postMessage({
+              type: 'TXGUARD_RESULT',
+              eventId: data.eventId,
+              approved: true,
+            }, window.location.origin);
+          }
+        }).catch((err) => {
           window.postMessage({
             type: 'TXGUARD_RESULT',
             eventId: data.eventId,
             approved: false,
-            error: response?.error || 'Analysis rejected the transaction',
-            riskLevel: response?.analysis?.riskLevel,
-            riskScore: response?.analysis?.riskScore,
-            explanation: response?.analysis?.explanation,
+            error: err instanceof Error ? err.message : 'Analysis failed',
           }, window.location.origin);
-          return;
-        }
+        });
+        return;
+      }
 
-        if (response?.analysis && response.requiresUserDecision) {
-          showGuardianOverlay(response.analysis, (approved) => {
-            window.postMessage({
-              type: 'TXGUARD_RESULT',
-              eventId: data.eventId,
-              approved,
-              riskLevel: response.analysis.riskLevel,
-              riskScore: response.analysis.riskScore,
-            }, window.location.origin);
-          });
-        } else {
-          window.postMessage({
-            type: 'TXGUARD_RESULT',
-            eventId: data.eventId,
-            approved: true,
-          }, window.location.origin);
-        }
-      }).catch((err) => {
+      // Handle message signing safety check
+      if (data.type === 'TXGUARD_CHECK_MESSAGE') {
+        if (typeof data.eventId !== 'string') return;
+        const threats = [...browserThreats.values()];
+        const hasCritical = threats.some((s) => s.level === RiskLevel.CRITICAL);
+        const hasHigh = threats.some((s) => s.level === RiskLevel.HIGH);
         window.postMessage({
-          type: 'TXGUARD_RESULT',
+          type: 'TXGUARD_MESSAGE_RESULT',
           eventId: data.eventId,
-          approved: false,
-          error: err instanceof Error ? err.message : 'Analysis failed',
+          approved: !hasCritical,
+          threatCount: threats.length,
+          riskLevel: hasCritical ? 'CRITICAL' : hasHigh ? 'HIGH' : threats.length > 0 ? 'MEDIUM' : 'SAFE',
         }, window.location.origin);
-      });
+        return;
+      }
     });
 
     function showGuardianOverlay(analysis: TransactionAnalysis, onDecision: DecisionHandler) {

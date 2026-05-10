@@ -9,10 +9,12 @@ import { Settings, type SettingsData } from '../components/Settings';
 
 export default function Analyze() {
   const [inputTx, setInputTx] = useState('');
+  const [addressHistoryText, setAddressHistoryText] = useState('');
   const [loading, setLoading] = useState(false);
   const [analysis, setAnalysis] = useState<TransactionAnalysis | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [showSettings, setShowSettings] = useState(false);
+  const [showAddressHistory, setShowAddressHistory] = useState(false);
   const [settings, setSettings] = useState<SettingsData>(() => {
     const saved = localStorage.getItem('txguard-settings');
     if (saved) return JSON.parse(saved);
@@ -35,6 +37,11 @@ export default function Analyze() {
     setError(null);
     setAnalysis(null);
 
+    const addressHistory = addressHistoryText
+      .split(/[\n,]/)
+      .map((s) => s.trim())
+      .filter((s) => s.length >= 32);
+
     try {
       const endpoint = inputTx.startsWith('http')
         ? `${settings.apiUrl}/api/blink/preview`
@@ -42,7 +49,7 @@ export default function Analyze() {
 
       const body = inputTx.startsWith('http')
         ? { url: inputTx, account: '11111111111111111111111111111111', cluster: settings.cluster }
-        : { transaction: inputTx, cluster: settings.cluster };
+        : { transaction: inputTx, cluster: settings.cluster, addressHistory };
 
       const res = await fetch(endpoint, {
         method: 'POST',
@@ -123,9 +130,15 @@ export default function Analyze() {
               spellCheck={false}
             />
             <div className="flex justify-between items-center">
-              <div className="text-xs text-white/30">
-                Supports base64 transactions and Solana Action URLs
-              </div>
+              <button
+                onClick={() => setShowAddressHistory(!showAddressHistory)}
+                className="text-xs text-white/30 hover:text-white/50 transition-colors flex items-center gap-1"
+              >
+                <svg className={`w-3 h-3 transition-transform ${showAddressHistory ? 'rotate-90' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+                </svg>
+                {showAddressHistory ? 'Hide' : 'Add known addresses (address poisoning detection)'}
+              </button>
               <button
                 onClick={handleAnalyze}
                 disabled={loading || !inputTx.trim()}
@@ -146,6 +159,21 @@ export default function Analyze() {
                 ) : 'Analyze Transaction'}
               </button>
             </div>
+
+            {showAddressHistory && (
+              <div className="animate-[fade-in_0.2s_ease-out]">
+                <textarea
+                  className="w-full h-20 bg-dark/50 border border-white/10 rounded-xl p-4 text-white font-mono text-xs focus:outline-none focus:ring-2 focus:ring-primary/50 transition-shadow custom-scrollbar resize-none placeholder-white/20"
+                  placeholder={`Enter one address per line or comma-separated.\nExamples of addresses you commonly interact with.\nTxGuard will detect if a recipient mimics these addresses.`}
+                  value={addressHistoryText}
+                  onChange={(e) => setAddressHistoryText(e.target.value)}
+                  spellCheck={false}
+                />
+                <p className="text-[10px] text-white/20 mt-1 px-1">
+                  Addresses you trust. TxGuard compares recipients against this list to detect lookalike poisoning attacks.
+                </p>
+              </div>
+            )}
           </div>
         </div>
 

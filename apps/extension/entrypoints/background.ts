@@ -29,6 +29,24 @@ export default defineBackground(() => {
     await browser.storage.local.set({ history: newHistory });
   }
 
+  async function getAddressHistory(): Promise<string[]> {
+    const data = await browser.storage.local.get('addressHistory');
+    return Array.isArray(data.addressHistory) ? data.addressHistory : [];
+  }
+
+  async function updateAddressHistory(analysis: TransactionAnalysis) {
+    const existing = await getAddressHistory();
+    const recipients = analysis.instructions
+      .filter((ix) => ix.type === 'transfer' && ix.data)
+      .map((ix) => (ix.data as Record<string, string>).to)
+      .filter((addr): addr is string => typeof addr === 'string');
+    const seen = new Set(existing);
+    for (const addr of recipients) seen.add(addr);
+    await browser.storage.local.set({
+      addressHistory: [...seen].slice(-200),
+    });
+  }
+
   browser.runtime.onMessage.addListener((message: unknown, sender: any, sendResponse: (response?: any) => void) => {
     if (!message || typeof message !== 'object') return false;
     const msg = message as Record<string, unknown>;
@@ -76,13 +94,14 @@ export default defineBackground(() => {
       const controller = new AbortController();
       const timeoutId = setTimeout(() => controller.abort(), 10_000);
       
-      Promise.all([getApiUrl(), getSettings()]).then(([apiUrl, settings]) => {
+      Promise.all([getApiUrl(), getSettings(), getAddressHistory()]).then(([apiUrl, settings, addressHistory]) => {
         fetch(`${apiUrl}/api/analyze`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             transaction: msg.transaction,
             cluster: settings.cluster || 'devnet',
+            addressHistory,
           }),
           signal: controller.signal
         })
@@ -96,6 +115,7 @@ export default defineBackground(() => {
         .then(async (analysis: TransactionAnalysis) => {
           clearTimeout(timeoutId);
           await saveToHistory({ type: 'transaction', analysis });
+          await updateAddressHistory(analysis);
           
           sendResponse({
             analysis,

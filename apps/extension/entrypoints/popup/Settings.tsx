@@ -13,7 +13,7 @@ export default function Settings({ onClose }: { onClose: () => void }) {
     apiUrl: 'http://localhost:3001',
     cluster: 'devnet',
     sensitivityLevel: 'medium',
-    historyRetentionDays: 7,
+    historyRetentionDays: 1,
     trustedOrigins: [],
   });
   const [saved, setSaved] = useState(false);
