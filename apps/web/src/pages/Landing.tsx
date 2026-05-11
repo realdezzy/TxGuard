@@ -1,3 +1,5 @@
+import Logo from '../components/Logo';
+
 export default function Landing() {
   const navigateToAnalyze = () => {
     window.location.hash = '#/analyze';
@@ -11,11 +13,7 @@ export default function Landing() {
         <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
           <div className="flex h-16 items-center justify-between">
             <div className="flex items-center gap-3">
-              <div className="flex items-center justify-center w-10 h-10 rounded-xl bg-gradient-to-tr from-primary to-secondary shadow-lg shadow-primary/20">
-                <svg className="w-6 h-6 text-darker" viewBox="0 0 24 24" fill="currentColor">
-                  <path d="M12 2L3 7v6c0 5.55 3.84 10.74 9 12 5.16-1.26 9-6.45 9-12V7l-9-5zm0 18c-3.75-1-6.5-4.82-6.5-9V8.55l6.5-3.61 6.5 3.61V11c0 4.18-2.75 8-6.5 9z"/>
-                </svg>
-              </div>
+              <Logo size={40} />
               <span className="text-xl font-bold tracking-tight">TxGuard</span>
             </div>
             <div className="flex items-center gap-6">
@@ -316,11 +314,7 @@ export default function Landing() {
         <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
           <div className="flex flex-col sm:flex-row items-center justify-between gap-4">
             <div className="flex items-center gap-2">
-              <div className="w-6 h-6 rounded-md bg-gradient-to-tr from-primary to-secondary flex items-center justify-center">
-                <svg className="w-4 h-4 text-darker" viewBox="0 0 24 24" fill="currentColor">
-                  <path d="M12 2L3 7v6c0 5.55 3.84 10.74 9 12 5.16-1.26 9-6.45 9-12V7l-9-5z"/>
-                </svg>
-              </div>
+              <Logo size={24} />
               <span className="text-sm font-bold text-white/50">TxGuard</span>
             </div>
             <p className="text-xs text-white/20">

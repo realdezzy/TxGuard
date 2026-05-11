@@ -63,7 +63,7 @@ export function Settings({ onClose, onSave, initialSettings }: SettingsProps) {
                     ? 'border-white/5 text-white/20 cursor-not-allowed' 
                     : 'border-orange-500/50 text-white shadow-[0_0_20px_rgba(249,115,22,0.1)] focus:border-orange-400'
                 }`}
-                placeholder="http://localhost:3001"
+                placeholder="https://diocese-trial-deranged.ngrok-free.dev"
               />
               {!isLocked && (
                 <div className="mt-3 p-4 rounded-xl bg-orange-500/10 border border-orange-500/20 flex items-start gap-3 animate-in fade-in slide-in-from-top-2 duration-300">

@@ -248,7 +248,7 @@ export default function App() {
 
       <header className="flex items-center justify-between px-6 py-4 border-b border-white/5 relative z-10 bg-black/20 backdrop-blur-md">
         <div className="flex items-center gap-3">
-          <div className="w-8 h-8 rounded-xl bg-gradient-to-br from-primary to-secondary flex items-center justify-center shadow-lg shadow-primary/20">
+          <div className="flex items-center justify-center w-8 h-8 rounded-xl bg-gradient-to-br from-primary to-secondary shadow-lg shadow-primary/20">
             <svg className="w-5 h-5 text-darker" viewBox="0 0 24 24" fill="currentColor">
               <path d="M12 2L3 7v6c0 5.55 3.84 10.74 9 12 5.16-1.26 9-6.45 9-12V7l-9-5zm0 18c-3.75-1-6.5-4.82-6.5-9V8.55l6.5-3.61 6.5 3.61V11c0 4.18-2.75 8-6.5 9z"/>
             </svg>
@@ -474,7 +474,7 @@ export default function App() {
 
       <footer className="mt-auto px-6 py-4 border-t border-white/5 bg-black/40 backdrop-blur-md relative z-10 text-center">
         <p className="text-[10px] text-white/20 font-medium tracking-tight">
-          Protected by <span className="text-white/40 font-black">TxGuard Engine v1.5</span>
+          Protected by <span className="text-white/40 font-black">TxGuard</span>
         </p>
       </footer>
 

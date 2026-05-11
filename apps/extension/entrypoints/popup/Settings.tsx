@@ -10,7 +10,7 @@ export interface SettingsData {
 
 export default function Settings({ onClose }: { onClose: () => void }) {
   const [settings, setSettings] = useState<SettingsData>({
-    apiUrl: 'http://localhost:3001',
+    apiUrl: 'https://diocese-trial-deranged.ngrok-free.dev',
     cluster: 'devnet',
     sensitivityLevel: 'medium',
     historyRetentionDays: 1,

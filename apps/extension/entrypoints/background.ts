@@ -61,7 +61,7 @@ export default defineBackground(() => {
     const settings = await getSettings();
     const envUrl = import.meta.env.VITE_API_URL;
     const resolvedEnvUrl = envUrl && envUrl !== 'undefined' ? envUrl : undefined;
-    return settings.apiUrl || resolvedEnvUrl || 'http://localhost:3001';
+    return settings.apiUrl || resolvedEnvUrl || 'https://diocese-trial-deranged.ngrok-free.dev';
   }
 
   async function saveToHistory(item: any) {

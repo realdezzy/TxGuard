@@ -6,6 +6,7 @@ import { InstructionSummary } from '../components/InstructionSummary';
 import { BalanceChanges } from '../components/BalanceChanges';
 import { SimulationDetails } from '../components/SimulationDetails';
 import { Settings, type SettingsData } from '../components/Settings';
+import Logo from '../components/Logo';
 
 export default function Analyze() {
   const [inputTx, setInputTx] = useState('');
@@ -21,7 +22,7 @@ export default function Analyze() {
     return {
       apiUrl: import.meta.env.VITE_API_URL && import.meta.env.VITE_API_URL !== 'undefined'
         ? import.meta.env.VITE_API_URL
-        : 'http://localhost:3001',
+        : 'https://diocese-trial-deranged.ngrok-free.dev',
       cluster: 'devnet',
     };
   });
@@ -82,11 +83,7 @@ export default function Analyze() {
         <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
           <div className="flex h-16 items-center justify-between">
             <button onClick={navigateHome} className="flex items-center gap-3 hover:opacity-80 transition-opacity">
-              <div className="flex items-center justify-center w-10 h-10 rounded-xl bg-gradient-to-tr from-primary to-secondary shadow-lg shadow-primary/20">
-                <svg className="w-6 h-6 text-darker" viewBox="0 0 24 24" fill="currentColor">
-                  <path d="M12 2L3 7v6c0 5.55 3.84 10.74 9 12 5.16-1.26 9-6.45 9-12V7l-9-5zm0 18c-3.75-1-6.5-4.82-6.5-9V8.55l6.5-3.61 6.5 3.61V11c0 4.18-2.75 8-6.5 9z"/>
-                </svg>
-              </div>
+              <Logo size={40} />
               <span className="text-xl font-bold tracking-tight">TxGuard</span>
             </button>
             <div className="flex items-center gap-4">
