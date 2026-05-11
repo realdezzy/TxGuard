@@ -23,6 +23,7 @@ export default function App() {
   const [activeTabUrl, setActiveTabUrl] = useState<string | null>(null);
   const [retentionDays, setRetentionDays] = useState(1);
   const [deleting, setDeleting] = useState(false);
+  const [showDevTools, setShowDevTools] = useState(false);
 
   useEffect(() => {
     loadHistory();
@@ -104,6 +105,119 @@ export default function App() {
     }
   };
 
+  const seedMockData = async () => {
+    const now = Date.now();
+    const mockItems: HistoryItem[] = [
+      {
+        id: 'mock-1',
+        type: 'transaction',
+        url: activeTabUrl || 'https://jup.ag/swap',
+        timestamp: now - 60_000,
+        analysis: {
+          instructions: [],
+          signals: [
+            { type: 'SOLPHISH_PATTERN' as any, level: 'CRITICAL' as any, title: 'SolPhish Account Authority Transfer', message: 'This transaction transfers account ownership. This is a known Solana phishing pattern.' },
+            { type: 'ADDRESS_POISONING' as any, level: 'CRITICAL' as any, title: 'Address Poisoning Detected', message: 'Recipient closely mimics a known address. First and last characters match.' },
+            { type: 'UNKNOWN_PROGRAM' as any, level: 'HIGH' as any, title: 'Unknown Program Interaction', message: 'Transaction interacts with 3 programs not in the trusted allowlist.' },
+          ],
+          simulation: { success: true, logs: [] as string[], balanceChanges: [], unitsConsumed: 45000, confidence: 'HIGH' as any, writableSigners: [] },
+          riskScore: 85,
+          whyScore: [],
+          scoreVarianceHint: 'LOW' as any,
+          riskLevel: 'CRITICAL' as any,
+          recommendation: 'REJECT' as any,
+          explanation: 'This transaction attempts to change the authority of your token account and sends funds to an address that mimics one of your known contacts. The combination of account authority transfer and address poisoning indicates a likely phishing attack.',
+          timestamp: now - 60_000,
+        },
+      },
+      {
+        id: 'mock-2',
+        type: 'browser',
+        url: activeTabUrl || 'https://jukp.ag/swap',
+        title: 'Fake Jupiter',
+        timestamp: now - 300_000,
+        analysis: {
+          instructions: [],
+          signals: [
+            { type: 'CLICKJACKING' as any, level: 'HIGH' as any, title: 'Suspicious Page Overlay', message: 'A large transparent overlay is intercepting pointer events. This pattern is commonly used to redirect clicks.' },
+            { type: 'WALLET_SPOOFING' as any, level: 'MEDIUM' as any, title: 'Wallet UI Spoofing Risk', message: 'This page shows multiple wallet-like controls but no Solana provider is available.' },
+          ],
+          simulation: null,
+          riskScore: 55,
+          whyScore: [],
+          scoreVarianceHint: 'MEDIUM' as any,
+          riskLevel: 'MEDIUM' as any,
+          recommendation: 'CAUTION' as any,
+          explanation: 'This page has suspicious overlays that could intercept clicks, and wallet-like UI elements on a site that has no legitimate Solana wallet provider. Approach with caution.',
+          timestamp: now - 300_000,
+        },
+      },
+      {
+        id: 'mock-3',
+        type: 'blink',
+        url: 'https://blink.solflare.com/action/swap',
+        timestamp: now - 3_600_000,
+        analysis: {
+          instructions: [],
+          signals: [
+            { type: 'BLINK_PHISHING' as any, level: 'HIGH' as any, title: 'Untrusted Blink Source', message: 'This Solana Action originates from a domain not in the trusted list.' },
+          ],
+          simulation: null,
+          riskScore: 40,
+          whyScore: [],
+          scoreVarianceHint: 'LOW' as any,
+          riskLevel: 'MEDIUM' as any,
+          recommendation: 'CAUTION' as any,
+          explanation: 'The Blink URL comes from an untrusted source. The embedded transaction should be reviewed carefully before signing.',
+          timestamp: now - 3_600_000,
+        },
+      },
+      {
+        id: 'mock-4',
+        type: 'transaction',
+        url: activeTabUrl || 'https://jup.ag/swap',
+        timestamp: now - 7_200_000,
+        analysis: {
+          instructions: [],
+          signals: [],
+          simulation: { success: true, logs: [] as string[], balanceChanges: [], unitsConsumed: 25000, confidence: 'HIGH' as any, writableSigners: [] },
+          riskScore: 5,
+          whyScore: [],
+          scoreVarianceHint: 'LOW' as any,
+          riskLevel: 'SAFE' as any,
+          recommendation: 'APPROVE' as any,
+          explanation: 'This transaction is a routine token swap on Jupiter. All programs are trusted, there are no suspicious patterns.',
+          timestamp: now - 7_200_000,
+        },
+      },
+      {
+        id: 'mock-5',
+        type: 'transaction',
+        url: 'https://solsniper.xyz/trade',
+        timestamp: now - 86_400_000,
+        analysis: {
+          instructions: [],
+          signals: [
+            { type: 'COMPUTE_BUDGET_MANIPULATION' as any, level: 'MEDIUM' as any, title: 'Elevated Priority Fee with Risk Signals', message: 'A high compute unit price was set alongside suspicious instructions. This could indicate front-running or rushing a malicious transaction.' },
+            { type: 'DURABLE_NONCE' as any, level: 'MEDIUM' as any, title: 'Durable Nonce Transaction', message: 'This transaction uses a durable nonce, meaning it can be submitted at any future time.' },
+          ],
+          simulation: null,
+          riskScore: 28,
+          whyScore: [],
+          scoreVarianceHint: 'LOW' as any,
+          riskLevel: 'LOW' as any,
+          recommendation: 'CAUTION' as any,
+          explanation: 'Transaction uses an elevated priority fee and a durable nonce. While not necessarily malicious, the combination deserves attention.',
+          timestamp: now - 86_400_000,
+        },
+      },
+    ];
+
+    await browser.storage.local.set({ history: mockItems });
+    setShowDevTools(false);
+    await loadHistory();
+  };
+
   const normalizeUrl = (url: string | undefined): string => {
     if (!url) return '';
     try {
@@ -155,6 +269,15 @@ export default function App() {
             <svg className="w-5 h-5 text-white/50" fill="none" viewBox="0 0 24 24" stroke="currentColor">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+            </svg>
+          </button>
+          <button
+            onClick={() => setShowDevTools(!showDevTools)}
+            className="p-2 rounded-lg hover:bg-white/5 transition-all active:scale-95"
+            title="Dev Tools"
+          >
+            <svg className={`w-4 h-4 ${showDevTools ? 'text-yellow-400' : 'text-white/20'}`} fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19.428 15.428a2 2 0 00-1.022-.547l-2.387-.477a6 6 0 00-3.86.517l-.318.158a6 6 0 01-3.86.517L6.05 15.21a2 2 0 00-1.806.547M8 4h8l-1 1v5.172a2 2 0 00.586 1.414l5 5c1.26 1.26.367 3.414-1.415 3.414H4.828c-1.782 0-2.674-2.154-1.414-3.414l5-5A2 2 0 009 10.172V5L8 4z" />
             </svg>
           </button>
         </div>
@@ -312,6 +435,38 @@ export default function App() {
                   </div>
                 </button>
               ))}
+            </div>
+          </div>
+        )}
+
+        {/* Dev Tools Panel */}
+        {showDevTools && (
+          <div className="mb-8 p-5 rounded-2xl border border-yellow-500/20 bg-yellow-500/5 animate-[fade-in_0.2s_ease-out]">
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="text-[10px] font-black text-yellow-400 uppercase tracking-[0.2em]">
+                Dev Tools
+              </h3>
+              <button
+                onClick={() => setShowDevTools(false)}
+                className="text-white/20 hover:text-white/50 text-xs"
+              >
+                ✕
+              </button>
+            </div>
+            <div className="space-y-2">
+              <button
+                onClick={seedMockData}
+                className="w-full py-2.5 rounded-xl bg-yellow-500/10 hover:bg-yellow-500/20 border border-yellow-500/20 text-yellow-400 text-xs font-bold transition-all active:scale-[0.98] flex items-center justify-center gap-2"
+              >
+                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+                </svg>
+                Seed 5 Mock History Items
+              </button>
+              <div className="text-[10px] text-white/20 leading-relaxed px-1">
+                Seeds 5 mock entries: CRITICAL transaction, MEDIUM browser threat, MEDIUM blink, SAFE swap, LOW nonce.
+                Each item has full signals, explanation, and metadata for testing the UI.
+              </div>
             </div>
           </div>
         )}

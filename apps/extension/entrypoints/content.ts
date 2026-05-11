@@ -121,6 +121,89 @@ export default defineContentScript({
     };
 
     let toastContainer: HTMLElement | null = null;
+    let riskBadge: HTMLElement | null = null;
+
+    const showRiskBadge = (analysis: TransactionAnalysis) => {
+      if (riskBadge) {
+        riskBadge.remove();
+        riskBadge = null;
+      }
+
+      const riskColor = analysis.riskLevel === RiskLevel.CRITICAL ? '#ef4444' :
+                        analysis.riskLevel === RiskLevel.HIGH ? '#f97316' :
+                        analysis.riskLevel === RiskLevel.MEDIUM ? '#eab308' : '#22c55e';
+
+      const badge = document.createElement('div');
+      badge.id = 'txguard-risk-badge';
+      const shadow = badge.attachShadow({ mode: 'open' });
+
+      const style = document.createElement('style');
+      style.textContent = `
+        .badge-wrap {
+          position: fixed; bottom: 20px; right: 20px; z-index: 2147483646;
+          display: flex; align-items: center; gap: 10px;
+          padding: 10px 16px;
+          background: rgba(10, 10, 10, 0.9); backdrop-filter: blur(10px);
+          border: 1px solid ${riskColor}33; border-radius: 14px;
+          font-family: system-ui, -apple-system, sans-serif; color: white;
+          cursor: pointer; user-select: none;
+          box-shadow: 0 8px 32px rgba(0,0,0,0.4);
+          animation: txguard-badge-in 0.4s cubic-bezier(0.16,1,0.3,1);
+          transition: all 0.2s;
+        }
+        .badge-wrap:hover {
+          background: rgba(15, 15, 15, 0.95);
+          border-color: ${riskColor}66;
+          transform: translateY(-2px);
+          box-shadow: 0 12px 40px rgba(0,0,0,0.5);
+        }
+        @keyframes txguard-badge-in {
+          from { transform: translateY(12px); opacity: 0; }
+          to { transform: translateY(0); opacity: 1; }
+        }
+        .close-badge {
+          display: flex; align-items: center; justify-content: center;
+          width: 20px; height: 20px; border-radius: 50%;
+          background: rgba(255,255,255,0.08); border: none; cursor: pointer;
+          color: rgba(255,255,255,0.4); font-size: 11px; transition: all 0.15s;
+        }
+        .close-badge:hover { background: rgba(255,255,255,0.15); color: white; }
+      `;
+      shadow.appendChild(style);
+
+      const badgeInner = document.createElement('div');
+      badgeInner.className = 'badge-wrap';
+      badgeInner.innerHTML = `
+        <div style="
+          width: 10px; height: 10px; border-radius: 50%;
+          background: ${riskColor}; box-shadow: 0 0 8px ${riskColor};
+          animation: txguard-badge-in 0.4s ease;
+        "></div>
+        <div>
+          <div style="font-size: 11px; font-weight: 800; color: ${riskColor}; text-transform: uppercase; letter-spacing: 0.04em;">
+            ${analysis.riskLevel} Risk
+          </div>
+          <div style="font-size: 10px; color: rgba(255,255,255,0.4);">
+            ${analysis.signals.length} signal${analysis.signals.length !== 1 ? 's' : ''} detected
+          </div>
+        </div>
+        <button class="close-badge" title="Dismiss">✕</button>
+      `;
+      shadow.appendChild(badgeInner);
+      document.body.appendChild(badge);
+
+      shadow.querySelector('.close-badge')?.addEventListener('click', (e) => {
+        e.stopPropagation();
+        badge.remove();
+        riskBadge = null;
+      });
+
+      badgeInner.addEventListener('click', () => {
+        showThreatToast(analysis);
+      });
+
+      riskBadge = badge;
+    };
 
     const showThreatToast = (analysis: TransactionAnalysis) => {
       if (toastContainer) {
@@ -281,10 +364,51 @@ export default defineContentScript({
       dismissTimer = setTimeout(dismiss, 10_000);
     };
 
-    const reportThreats = () => {
+    let lastPhishCheck = 0;
+    const PHISH_CHECK_TTL = 30 * 60_000; // 30 min
+
+    const checkDomainReputation = async () => {
+      if (isSafeDomain()) return;
+      const now = Date.now();
+      if (now - lastPhishCheck < PHISH_CHECK_TTL) return;
+      lastPhishCheck = now;
+
+      let hostname = location.hostname;
+      if (hostname.startsWith('www.')) hostname = hostname.slice(4);
+
+      try {
+        const result = await browser.runtime.sendMessage({
+          type: 'CHECK_PHISHING_DOMAIN',
+          domain: hostname,
+        }) as { threat: boolean; severity: string; riskScore: number };
+
+        if (result?.threat) {
+          rememberThreat({
+            type: SignalType.BLINK_PHISHING,
+            level: result.severity === 'critical' ? RiskLevel.CRITICAL :
+                   result.severity === 'high' ? RiskLevel.HIGH :
+                   result.severity === 'medium' ? RiskLevel.MEDIUM : RiskLevel.LOW,
+            title: 'Known Phishing Domain',
+            message: `This domain (${hostname}) is flagged as "${result.severity}" by the PhishDestroy threat intelligence network (score: ${result.riskScore}/100).`,
+            metadata: {
+              domain: hostname,
+              source: 'PhishDestroy API',
+              severity: result.severity,
+              riskScore: result.riskScore,
+              scope: 'page',
+            },
+          }, 'page');
+          reportThreats(true);
+        }
+      } catch {
+        // PhishDestroy check failed silently
+      }
+    };
+
+    const reportThreats = (force = false) => {
       if (browserThreats.size === 0) return;
       const now = Date.now();
-      if (now - lastReportTimestamp < REPORT_THROTTLE_MS) return;
+      if (!force && now - lastReportTimestamp < REPORT_THROTTLE_MS) return;
       lastReportTimestamp = now;
 
       const report: BrowserThreatReport = {
@@ -297,6 +421,9 @@ export default defineContentScript({
       const analysis = buildBrowserAnalysis(report);
       if (analysis.riskLevel !== RiskLevel.SAFE && analysis.riskLevel !== RiskLevel.LOW) {
         showThreatToast(analysis);
+      }
+      if (analysis.riskLevel !== RiskLevel.SAFE) {
+        showRiskBadge(analysis);
       }
 
       browser.runtime.sendMessage({ type: 'BROWSER_THREAT', report }).catch(() => undefined);
@@ -358,6 +485,9 @@ export default defineContentScript({
       setTimeout(reportThreats, 1000);
       window.addEventListener('click', detectClickTargetMismatch, true);
     }
+    // PhishDestroy domain check runs on every page (even safe-listed ones)
+    // and force-reports if the domain is flagged
+    setTimeout(() => checkDomainReputation(), 300);
 
     // MutationObserver for lazy-loaded threats — only on relevant pages
     let mutationScanCount = 0;

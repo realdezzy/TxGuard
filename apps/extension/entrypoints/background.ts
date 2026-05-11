@@ -7,6 +7,51 @@ export default defineBackground(() => {
 
   const MAX_TX_PAYLOAD_BYTES = 1_048_576;
 
+  // PhishDestroy domain cache — prevent re-checking the same domain
+  const domainCache = new Map<string, { threat: boolean; severity: string; riskScore: number; checkedAt: number }>();
+  const CACHE_TTL_MS = 30 * 60_000; // 30 minutes
+
+  async function checkPhishingDomain(domain: string) {
+    const cached = domainCache.get(domain);
+    if (cached && Date.now() - cached.checkedAt < CACHE_TTL_MS) {
+      return { threat: cached.threat, severity: cached.severity, riskScore: cached.riskScore, cached: true };
+    }
+
+    try {
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 5_000);
+
+      const res = await fetch(
+        `https://api.destroy.tools/v1/check?domain=${encodeURIComponent(domain)}`,
+        { signal: controller.signal },
+      );
+      clearTimeout(timeout);
+
+      if (!res.ok) return { threat: false, severity: 'unknown', riskScore: 0 };
+
+      const data = await res.json() as {
+        threat?: boolean;
+        severity?: string;
+        risk_score?: number;
+        flags?: string[];
+      };
+
+      const result = {
+        threat: data.threat ?? false,
+        severity: data.severity ?? 'unknown',
+        riskScore: data.risk_score ?? 0,
+      };
+
+      domainCache.set(domain, { ...result, checkedAt: Date.now() });
+
+      return { ...result, cached: false };
+    } catch {
+      // API unreachable — return stale cache if available, else assume safe
+      if (cached) return { threat: cached.threat, severity: cached.severity, riskScore: cached.riskScore, cached: true };
+      return { threat: false, severity: 'unknown', riskScore: 0 };
+    }
+  }
+
   async function getSettings(): Promise<Record<string, any>> {
     const data = await browser.storage.local.get('settings');
     return (data.settings || {}) as Record<string, any>;
@@ -165,6 +210,11 @@ export default defineBackground(() => {
 
     if (msg.type === 'GET_HISTORY') {
       browser.storage.local.get('history').then(data => sendResponse(data.history || []));
+      return true;
+    }
+
+    if (msg.type === 'CHECK_PHISHING_DOMAIN' && typeof msg.domain === 'string' && msg.domain.length > 0) {
+      checkPhishingDomain(msg.domain).then(result => sendResponse(result));
       return true;
     }
 
