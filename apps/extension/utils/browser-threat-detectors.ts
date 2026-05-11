@@ -18,6 +18,7 @@ export interface BrowserThreatContext {
   viewportHeight?: number;
   solanaProvider?: unknown;
   phantomSolanaProvider?: unknown;
+  hasWalletProvider?: boolean;
 }
 
 const SENSITIVE_TEXT = [
@@ -296,7 +297,7 @@ export function detectWalletSpoofingRisk(documentRef: Document, context: Browser
   const walletLikeControls = [...documentRef.querySelectorAll('button, a, [role="button"], input[type="button"], input[type="submit"]')]
     .filter((element) => isVisible(element) && hasSensitiveText(element));
 
-  if (walletLikeControls.length >= 5 && !context.solanaProvider) {
+  if (walletLikeControls.length >= 5 && !context.solanaProvider && !context.hasWalletProvider) {
     results.push({
       category: 'dom',
       signal: {

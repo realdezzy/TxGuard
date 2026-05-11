@@ -441,6 +441,7 @@ export default defineContentScript({
       viewportHeight: window.innerHeight,
       solanaProvider: (window as { solana?: unknown }).solana,
       phantomSolanaProvider: (window as { phantom?: { solana?: unknown } }).phantom?.solana,
+      hasWalletProvider: hasWalletOrCryptoContext(),
     });
 
     function runAllDetectors() {

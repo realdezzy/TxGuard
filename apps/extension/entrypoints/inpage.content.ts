@@ -128,7 +128,7 @@ export default defineContentScript({
     };
 
     const wrapSolanaProvider = (provider: any) => {
-      if (!provider || provider.__isTxGuardWrapped) return;
+      if (!provider || provider.__isTxGuardWrapped) return provider;
 
       const walletName =
         provider.isPhantom
@@ -152,73 +152,57 @@ export default defineContentScript({
         hasGetter('signTransaction') ? '(getter-based)' : '(property-based)',
       );
 
+      let wrapFailures = 0;
+
       // signTransaction
-      wrapMethod(
-        provider,
-        'signTransaction',
+      if (!wrapMethod(
+        provider, 'signTransaction',
         (original) =>
           async function (this: any, transaction: any) {
             log('Intercepted signTransaction on', walletName);
             const result = await analyzeTx(transaction);
             if (result.approved) return original(transaction);
-            const riskInfo = result.riskLevel
-              ? ` [${result.riskLevel} risk, score ${result.riskScore}]`
-              : '';
+            const riskInfo = result.riskLevel ? ` [${result.riskLevel} risk, score ${result.riskScore}]` : '';
             throw new Error(`Transaction rejected by TxGuard${riskInfo}`);
           },
         walletName,
-      );
+      )) wrapFailures++;
 
       // signAllTransactions
-      wrapMethod(
-        provider,
-        'signAllTransactions',
+      if (!wrapMethod(
+        provider, 'signAllTransactions',
         (original) =>
           async function (this: any, transactions: any[]) {
-            log(
-              'Intercepted signAllTransactions on',
-              walletName,
-              `(${transactions.length} txs)`,
-            );
+            log('Intercepted signAllTransactions on', walletName, `(${transactions.length} txs)`);
             for (let i = 0; i < transactions.length; i++) {
               const result = await analyzeTx(transactions[i]);
               if (!result.approved) {
-                const riskInfo = result.riskLevel
-                  ? ` [${result.riskLevel} risk, score ${result.riskScore}]`
-                  : '';
-                throw new Error(
-                  `Batch transaction #${i + 1} rejected by TxGuard${riskInfo}`,
-                );
+                const riskInfo = result.riskLevel ? ` [${result.riskLevel} risk, score ${result.riskScore}]` : '';
+                throw new Error(`Batch transaction #${i + 1} rejected by TxGuard${riskInfo}`);
               }
             }
             return original(transactions);
           },
         walletName,
-      );
+      )) wrapFailures++;
 
-      // signAndSendTransaction — signs AND broadcasts in one call
-      wrapMethod(
-        provider,
-        'signAndSendTransaction',
+      // signAndSendTransaction
+      if (!wrapMethod(
+        provider, 'signAndSendTransaction',
         (original) =>
           async function (this: any, transaction: any, options?: any) {
             log('Intercepted signAndSendTransaction on', walletName);
             const result = await analyzeTx(transaction);
             if (result.approved) return original(transaction, options);
-            const riskInfo = result.riskLevel
-              ? ` [${result.riskLevel} risk, score ${result.riskScore}]`
-              : '';
-            throw new Error(
-              `Transaction rejected by TxGuard${riskInfo}`,
-            );
+            const riskInfo = result.riskLevel ? ` [${result.riskLevel} risk, score ${result.riskScore}]` : '';
+            throw new Error(`Transaction rejected by TxGuard${riskInfo}`);
           },
         walletName,
-      );
+      )) wrapFailures++;
 
-      // signMessage — prevent message signing on high-risk pages
-      wrapMethod(
-        provider,
-        'signMessage',
+      // signMessage
+      if (!wrapMethod(
+        provider, 'signMessage',
         (original) =>
           async function (this: any, message: Uint8Array, display?: string) {
             log('Intercepted signMessage on', walletName);
@@ -231,36 +215,103 @@ export default defineContentScript({
             return original(message, display);
           },
         walletName,
-      );
+      )) wrapFailures++;
+
+      // If any method failed, use a Proxy as fallback
+      if (wrapFailures > 0) {
+        log(`Provider ${walletName}: ${wrapFailures} method(s) failed to wrap. Creating Proxy fallback.`);
+        return createProxyProvider(provider, walletName);
+      }
 
       provider.__isTxGuardWrapped = true;
+      return provider;
+    };
+
+    const createProxyProvider = (provider: any, walletName: string) => {
+      const targets = new Set(['signTransaction', 'signAllTransactions', 'signAndSendTransaction', 'signMessage']);
+
+      const proxy = new Proxy(provider, {
+        get(target, prop, receiver) {
+          const value = Reflect.get(target, prop, receiver);
+          if (typeof prop === 'string' && targets.has(prop) && typeof value === 'function') {
+            const original = value.bind(target);
+            if (prop === 'signTransaction') {
+              return async function (this: any, transaction: any) {
+                log('Intercepted signTransaction on', walletName, '(proxy)');
+                const result = await analyzeTx(transaction);
+                if (result.approved) return original(transaction);
+                const riskInfo = result.riskLevel ? ` [${result.riskLevel} risk, score ${result.riskScore}]` : '';
+                throw new Error(`Transaction rejected by TxGuard${riskInfo}`);
+              };
+            }
+            if (prop === 'signAllTransactions') {
+              return async function (this: any, transactions: any[]) {
+                log('Intercepted signAllTransactions on', walletName, `(${transactions.length} txs) (proxy)`);
+                for (let i = 0; i < transactions.length; i++) {
+                  const result = await analyzeTx(transactions[i]);
+                  if (!result.approved) {
+                    const riskInfo = result.riskLevel ? ` [${result.riskLevel} risk, score ${result.riskScore}]` : '';
+                    throw new Error(`Batch transaction #${i + 1} rejected by TxGuard${riskInfo}`);
+                  }
+                }
+                return original(transactions);
+              };
+            }
+            if (prop === 'signAndSendTransaction') {
+              return async function (this: any, transaction: any, options?: any) {
+                log('Intercepted signAndSendTransaction on', walletName, '(proxy)');
+                const result = await analyzeTx(transaction);
+                if (result.approved) return original(transaction, options);
+                const riskInfo = result.riskLevel ? ` [${result.riskLevel} risk, score ${result.riskScore}]` : '';
+                throw new Error(`Transaction rejected by TxGuard${riskInfo}`);
+              };
+            }
+            if (prop === 'signMessage') {
+              return async function (this: any, message: Uint8Array, display?: string) {
+                log('Intercepted signMessage on', walletName, '(proxy)');
+                const safety = await checkMessageSafety();
+                if (!safety.approved) {
+                  throw new Error(
+                    `Message signing blocked by TxGuard — ${safety.threatCount} browser threat${safety.threatCount !== 1 ? 's' : ''} detected on this page`,
+                  );
+                }
+                return original(message, display);
+              };
+            }
+          }
+          return value;
+        },
+        set(target, prop, value) {
+          return Reflect.set(target, prop, value);
+        },
+        has(target, prop) {
+          return Reflect.has(target, prop);
+        },
+      });
+
+      (proxy as any).__isTxGuardWrapped = true;
+      log(`Provider ${walletName}: Proxy created successfully`);
+      return proxy;
     };
 
     const scan = () => {
       const win = window as any;
 
-      const providers: Array<{ name: string; obj: any }> = [];
+      const providers: Array<{ name: string; obj: any; winRoot?: any; key?: string }> = [];
 
-      if (win.solana) providers.push({ name: 'solana', obj: win.solana });
-      if (win.solflare) providers.push({ name: 'solflare', obj: win.solflare });
-      if (win.backpack) providers.push({ name: 'backpack', obj: win.backpack });
-      if (win.coinbaseSolana) providers.push({ name: 'coinbaseSolana', obj: win.coinbaseSolana });
+      if (win.solana) providers.push({ name: 'solana', obj: win.solana, winRoot: win, key: 'solana' });
+      if (win.solflare) providers.push({ name: 'solflare', obj: win.solflare, winRoot: win, key: 'solflare' });
+      if (win.backpack) providers.push({ name: 'backpack', obj: win.backpack, winRoot: win, key: 'backpack' });
+      if (win.coinbaseSolana) providers.push({ name: 'coinbaseSolana', obj: win.coinbaseSolana, winRoot: win, key: 'coinbaseSolana' });
 
-      if (win.phantom?.solana) providers.push({ name: 'phantom.solana', obj: win.phantom.solana });
-      if (win.okxwallet?.solana) providers.push({ name: 'okxwallet.solana', obj: win.okxwallet.solana });
-      if (win.trustwallet?.solana) providers.push({ name: 'trustwallet.solana', obj: win.trustwallet.solana });
-      if (win.nightly?.solana) providers.push({ name: 'nightly.solana', obj: win.nightly.solana });
-      if (win.bitget?.solana) providers.push({ name: 'bitget.solana', obj: win.bitget.solana });
+      if (win.phantom?.solana) providers.push({ name: 'phantom.solana', obj: win.phantom.solana, winRoot: win.phantom, key: 'solana' });
+      if (win.okxwallet?.solana) providers.push({ name: 'okxwallet.solana', obj: win.okxwallet.solana, winRoot: win.okxwallet, key: 'solana' });
+      if (win.trustwallet?.solana) providers.push({ name: 'trustwallet.solana', obj: win.trustwallet.solana, winRoot: win.trustwallet, key: 'solana' });
+      if (win.nightly?.solana) providers.push({ name: 'nightly.solana', obj: win.nightly.solana, winRoot: win.nightly, key: 'solana' });
+      if (win.bitget?.solana) providers.push({ name: 'bitget.solana', obj: win.bitget.solana, winRoot: win.bitget, key: 'solana' });
 
       try {
-        const walletStandard = win.navigator?.wallets as Array<{
-          accounts: any[];
-          signTransaction?: any;
-          signAllTransactions?: any;
-          signAndSendTransaction?: any;
-          signMessage?: any;
-          name?: string;
-        }>;
+        const walletStandard = win.navigator?.wallets as Array<any>;
         if (walletStandard && typeof walletStandard[Symbol.iterator] === 'function') {
           for (const wallet of walletStandard) {
             if (
@@ -276,15 +327,21 @@ export default defineContentScript({
             }
           }
         }
-      } catch {
-        /* wallet standard not available */
-      }
+      } catch { /* wallet standard not available */ }
 
       const wrapped = new Set<any>();
-      for (const { obj } of providers) {
+      for (const { name, obj, winRoot, key } of providers) {
         if (wrapped.has(obj)) continue;
-        wrapped.add(obj);
-        wrapSolanaProvider(obj);
+        const result = wrapSolanaProvider(obj);
+        if (result !== obj && winRoot && key) {
+          try {
+            winRoot[key] = result;
+            log(`Replaced window.${name} with proxy`);
+          } catch {
+            log(`Could not replace window.${name} reference`);
+          }
+        }
+        wrapped.add(result);
       }
     };
 

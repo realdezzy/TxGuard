@@ -29,6 +29,15 @@ export default function App() {
     loadHistory();
   }, []);
 
+  // Sync cluster from storage when returning from settings
+  useEffect(() => {
+    if (showSettings) return;
+    browser.storage.local.get('settings').then((data) => {
+      const s = (data.settings || {}) as Record<string, any>;
+      if (s.cluster) setCluster(s.cluster);
+    }).catch(() => {});
+  }, [showSettings]);
+
   const loadHistory = async () => {
     setLoading(true);
     try {
