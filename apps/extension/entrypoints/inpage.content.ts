@@ -113,13 +113,10 @@ export default defineContentScript({
           configurable: true,
           enumerable: true,
         });
-        log(`${prop}: wrapped successfully`);
       } catch (err) {
-        log(`${prop}: defineProperty failed, falling back`, (err as Error).message);
         try {
           provider[prop] = wrapped;
         } catch {
-          log(`${prop}: all wrapping attempts failed`);
           return false;
         }
       }
@@ -131,26 +128,15 @@ export default defineContentScript({
       if (!provider || provider.__isTxGuardWrapped) return provider;
 
       const walletName =
-        provider.isPhantom
-          ? 'Phantom'
-          : provider.isSolflare
-            ? 'Solflare'
-            : provider.isBackpack
-              ? 'Backpack'
-              : provider.name ||
-                Object.getPrototypeOf(provider)?.constructor?.name ||
-                'unnamed';
+        provider.isPhantom ? 'Phantom' :
+        provider.isSolflare ? 'Solflare' :
+        provider.isBackpack ? 'Backpack' :
+        provider.name || Object.getPrototypeOf(provider)?.constructor?.name || 'unnamed';
 
       const hasGetter = (prop: string) => {
         const d = Object.getOwnPropertyDescriptor(provider, prop);
         return d && typeof d.get === 'function';
       };
-
-      log(
-        'Wrapping provider:',
-        walletName,
-        hasGetter('signTransaction') ? '(getter-based)' : '(property-based)',
-      );
 
       let wrapFailures = 0;
 
@@ -219,7 +205,7 @@ export default defineContentScript({
 
       // If any method failed, use a Proxy as fallback
       if (wrapFailures > 0) {
-        log(`Provider ${walletName}: ${wrapFailures} method(s) failed to wrap. Creating Proxy fallback.`);
+        log(`Provider ${walletName}: ${wrapFailures} methods non-writable, using Proxy`);
         return createProxyProvider(provider, walletName);
       }
 
@@ -290,7 +276,6 @@ export default defineContentScript({
       });
 
       (proxy as any).__isTxGuardWrapped = true;
-      log(`Provider ${walletName}: Proxy created successfully`);
       return proxy;
     };
 
@@ -334,12 +319,7 @@ export default defineContentScript({
         if (wrapped.has(obj)) continue;
         const result = wrapSolanaProvider(obj);
         if (result !== obj && winRoot && key) {
-          try {
-            winRoot[key] = result;
-            log(`Replaced window.${name} with proxy`);
-          } catch {
-            log(`Could not replace window.${name} reference`);
-          }
+          try { winRoot[key] = result; } catch { /* non-writable window property */ }
         }
         wrapped.add(result);
       }

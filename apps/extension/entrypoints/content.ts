@@ -45,7 +45,7 @@ export default defineContentScript({
   matches: ['<all_urls>'],
   allFrames: false,
   main() {
-    console.log('TxGuard content script injected');
+    // TxGuard content script injected
 
     const isIframe = window.top !== window.self;
 
@@ -718,8 +718,6 @@ export default defineContentScript({
         const isBlink = anchor.href.includes('/api/actions/') || anchor.href.startsWith('solana-action:');
         
         if (isBlink) {
-          console.log('Blink URL detected:', anchor.href);
-          
           browser.runtime.sendMessage({
             type: 'ANALYZE_BLINK',
             url: anchor.href

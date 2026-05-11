@@ -3,7 +3,7 @@ import type { TransactionAnalysis } from '@txguard/core';
 import { calculateRiskScore, scoreToRiskLevel, scoreToRecommendation } from '@txguard/core';
 
 export default defineBackground(() => {
-  console.log('TxGuard background worker started');
+  // TxGuard background worker started
 
   const MAX_TX_PAYLOAD_BYTES = 1_048_576;
 
