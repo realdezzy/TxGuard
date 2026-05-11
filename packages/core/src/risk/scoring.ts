@@ -1,6 +1,6 @@
 import { RiskLevel, SignalType, type RiskSignal, type WhyScoreReason, type ScoreVarianceHint } from '../types/index.js';
 
-export const SCORING_VERSION = '1.2.0';
+export const SCORING_VERSION = '1.3.0';
 
 export const SIGNAL_WEIGHTS: Record<SignalType, number> = {
   [SignalType.ADDRESS_POISONING]: 30,
@@ -9,8 +9,6 @@ export const SIGNAL_WEIGHTS: Record<SignalType, number> = {
   [SignalType.UNKNOWN_PROGRAM]: 10,
   [SignalType.BLINK_PHISHING]: 35,
   [SignalType.LARGE_TRANSFER]: 5,
-  // SIMULATION_FAILURE means the tx will likely revert — lower severity than unavailability
-  // which leaves the analysis completely blind.
   [SignalType.SIMULATION_FAILURE]: 25,
   [SignalType.SIMULATION_UNAVAILABLE]: 35,
   [SignalType.TOKEN_APPROVAL]: 30,
@@ -24,6 +22,7 @@ export const SIGNAL_WEIGHTS: Record<SignalType, number> = {
   [SignalType.SOLPHISH_PATTERN]: 40,
   [SignalType.ACCOUNT_METADATA_UNAVAILABLE]: 20,
   [SignalType.WRITABLE_PATTERN]: 15,
+  [SignalType.EXTERNAL_THREAT]: 55,
 };
 
 export const LEVEL_MULTIPLIERS: Record<RiskLevel, number> = {
@@ -43,6 +42,7 @@ const SIMULATION_SIGNAL_TYPES = new Set<SignalType>([
 const BROWSER_SIGNAL_TYPES = new Set<SignalType>([
   SignalType.CLICKJACKING,
   SignalType.WALLET_SPOOFING,
+  SignalType.EXTERNAL_THREAT,
 ]);
 
 const CONFIDENCE_MULTIPLIERS: Record<string, number> = {
@@ -128,6 +128,13 @@ export function calculateRiskScore(signals: RiskSignal[]): CalculateRiskScoreRes
     if (signals.some((s) => s.type === SignalType.WALLET_SPOOFING)) {
       score = Math.max(score, 60);
     }
+  }
+
+  // Verified external threat intelligence — floor score at 70 (HIGH → REJECT)
+  if (signals.some((s) => s.type === SignalType.EXTERNAL_THREAT && s.level === RiskLevel.CRITICAL)) {
+    score = Math.max(score, 70);
+  } else if (signals.some((s) => s.type === SignalType.EXTERNAL_THREAT && s.level === RiskLevel.HIGH)) {
+    score = Math.max(score, 60);
   }
 
   let scoreVarianceHint: ScoreVarianceHint = 'LOW';

@@ -34,6 +34,7 @@ export const SignalType = {
   SOLPHISH_PATTERN: 'SOLPHISH_PATTERN',
   ACCOUNT_METADATA_UNAVAILABLE: 'ACCOUNT_METADATA_UNAVAILABLE',
   WRITABLE_PATTERN: 'WRITABLE_PATTERN',
+  EXTERNAL_THREAT: 'EXTERNAL_THREAT',
 } as const;
 
 export type SignalType = (typeof SignalType)[keyof typeof SignalType];

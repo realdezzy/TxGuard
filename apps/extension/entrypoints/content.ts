@@ -384,7 +384,7 @@ export default defineContentScript({
 
         if (result?.threat) {
           rememberThreat({
-            type: SignalType.BLINK_PHISHING,
+            type: SignalType.EXTERNAL_THREAT,
             level: result.severity === 'critical' ? RiskLevel.CRITICAL :
                    result.severity === 'high' ? RiskLevel.HIGH :
                    result.severity === 'medium' ? RiskLevel.MEDIUM : RiskLevel.LOW,
